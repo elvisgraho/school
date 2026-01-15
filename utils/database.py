@@ -6,6 +6,7 @@ Optimized for 15,000+ video files.
 
 import sqlite3
 import os
+import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -65,17 +66,19 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_lessons_lesson_date 
                 ON lessons(lesson_date)
             ''')
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_lessons_completed_at 
+                ON lessons(completed_at)
+            ''')
     
     def sync_folder(self, folder_path: str, parse_func) -> Dict[str, Any]:
         """Sync lessons from folder using diff engine with content-based hashing."""
-        import hashlib
-        
         stats = {'added': 0, 'updated': 0, 'archived': 0, 'errors': 0, 'unchanged': 0}
         
         if not os.path.isdir(folder_path):
             return stats
         
-        def compute_file_hash(filepath: str) -> str:
+        def compute_file_hash(filepath: str) -> Optional[str]:
             """Compute MD5 hash of file content (first + last 8KB)."""
             try:
                 hash_obj = hashlib.md5()
@@ -89,7 +92,7 @@ class DatabaseManager:
                         data = f.read(8192)
                         hash_obj.update(data)
                 return hash_obj.hexdigest()
-            except Exception:
+            except (OSError, IOError):
                 return None
         
         file_data = []
@@ -104,6 +107,8 @@ class DatabaseManager:
                             file_hash = compute_file_hash(filepath)
                             if file_hash:
                                 file_data.append((file_hash, filepath, entry.name, mtime))
+                            else:
+                                stats['errors'] += 1
                         except (OSError, IOError):
                             stats['errors'] += 1
         except OSError:
@@ -277,19 +282,23 @@ class DatabaseManager:
     def get_stats(self) -> Dict[str, Any]:
         """Get overall statistics."""
         with self._get_connection() as conn:
-            total = conn.execute('SELECT COUNT(*) FROM lessons WHERE status != "Archived"').fetchone()[0]
-            completed = conn.execute('SELECT COUNT(*) FROM lessons WHERE status = "Completed"').fetchone()[0]
-            in_progress = conn.execute('SELECT COUNT(*) FROM lessons WHERE status = "In Progress"').fetchone()[0]
-            new_count = conn.execute('SELECT COUNT(*) FROM lessons WHERE status = "New"').fetchone()[0]
+            rows = conn.execute('''
+                SELECT status, COUNT(*) as cnt 
+                FROM lessons 
+                WHERE status != 'Archived' 
+                GROUP BY status
+            ''').fetchall()
             
-            completion_rate = (completed / total * 100) if total > 0 else 0
+            counts = {row['status']: row['cnt'] for row in rows}
+            total = sum(counts.values())
+            completed = counts.get('Completed', 0)
             
             return {
                 'total': total,
                 'completed': completed,
-                'in_progress': in_progress,
-                'new': new_count,
-                'completion_rate': completion_rate
+                'in_progress': counts.get('In Progress', 0),
+                'new': counts.get('New', 0),
+                'completion_rate': (completed / total * 100) if total > 0 else 0
             }
     
     def get_activity_data(self, days: int = 365) -> List[Dict[str, Any]]:
@@ -333,27 +342,34 @@ class DatabaseManager:
         if not activity:
             return 0
         
-        dates = sorted([datetime.strptime(row['date'], '%Y-%m-%d').date() for row in activity])
+        dates = sorted([datetime.strptime(row['date'], '%Y-%m-%d').date() for row in activity], reverse=True)
         if not dates:
             return 0
         
         today = datetime.now().date()
         streak = 0
-        check_date = today
         
-        if dates[-1] < check_date - timedelta(days=1):
+        # Determine start point of streak (today or yesterday)
+        if dates[0] == today:
+            streak = 1
+            check_from = today - timedelta(days=1)
+        elif dates[0] == today - timedelta(days=1):
+            streak = 1
+            check_from = today - timedelta(days=2)
+        else:
             return 0
         
-        i = len(dates) - 1
-        while i >= 0:
-            if dates[i] == check_date or dates[i] == check_date - timedelta(days=1):
+        # Verify consecutive days backwards
+        current_check = check_from
+        # Set for O(1) lookups
+        date_set = set(dates)
+        
+        while True:
+            if current_check in date_set:
                 streak += 1
-                check_date = dates[i] - timedelta(days=1)
-                i -= 1
-            elif dates[i] < check_date - timedelta(days=1):
-                break
+                current_check -= timedelta(days=1)
             else:
-                i -= 1
+                break
         
         return streak
     
@@ -405,6 +421,7 @@ class DatabaseManager:
             
             result = []
             cumulative_completed = 0
+            # Calculate total active lessons
             total = conn.execute('SELECT COUNT(*) FROM lessons WHERE status != "Archived"').fetchone()[0]
             
             for row in rows:
@@ -438,3 +455,34 @@ class DatabaseManager:
                 LIMIT ?
             ''', (limit,)).fetchall()
             return [dict(row) for row in rows]
+
+    def get_recent_completions(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """Get the most recently completed lessons."""
+        with self._get_connection() as conn:
+            rows = conn.execute('''
+                SELECT title, author, completed_at
+                FROM lessons
+                WHERE status = 'Completed'
+                ORDER BY completed_at DESC
+                LIMIT ?
+            ''', (limit,)).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_day_of_week_stats(self) -> List[Dict[str, Any]]:
+        """Get completions grouped by day of week (0=Monday)."""
+        with self._get_connection() as conn:
+            # SQLite %w is 0=Sunday
+            rows = conn.execute('''
+                SELECT strftime('%w', completed_at) as dow, COUNT(*) as count
+                FROM lessons
+                WHERE status = 'Completed'
+                GROUP BY dow
+            ''').fetchall()
+            
+            result = []
+            for row in rows:
+                # Convert to Python weekday (0=Monday)
+                sqlite_dow = int(row['dow'])
+                python_dow = (sqlite_dow - 1) % 7
+                result.append({'day_index': python_dow, 'count': row['count']})
+            return result

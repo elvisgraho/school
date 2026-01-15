@@ -11,7 +11,7 @@ db = DatabaseManager()
 
 st.set_page_config(
     page_title="Guitar Shed",
-    page_icon="🎸",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -22,9 +22,26 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden !important;}
     .block-container {padding-top: 2rem; max-width: 98%;}
     [data-testid="stSidebar"] {background-color: #1a1a1a; border-right: 1px solid #333;}
-    /* Tab Styling - Precise & Flat */
-    .stTabs [data-baseweb="tab-list"] {gap: 1rem; border-bottom: 1px solid #333;}
-    .stTabs [aria-selected="true"] {background-color: #333 !important; color: #fff !important; border-top: 2px solid #555;}
+    /* Tab Styling - Clean & Spaced */
+    .stTabs [data-baseweb="tab-list"] {gap: 0.5rem; border-bottom: 1px solid #333; padding: 0 1rem;}
+    .stTabs [data-baseweb="tab"] {
+        height: 48px;
+        padding: 0 1.5rem;
+        background-color: transparent;
+        border: none;
+        border-radius: 0;
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: #888;
+        transition: all 0.2s;
+    }
+    .stTabs [data-baseweb="tab"]:hover {color: #ccc; background-color: #2a2a2a;}
+    .stTabs [aria-selected="true"] {
+        background-color: transparent !important;
+        color: #fff !important;
+        border-bottom: 2px solid #3A4A5C !important;
+    }
+    .stTabs [data-baseweb="tab-list"] button[aria-selected="false"] {opacity: 0.6;}
     [data-testid="stDataFrame"] {border: 1px solid #333;}
     [data-testid="stMetricValue"] {font-size: 1.25rem !important; color: #fff;}
     [data-testid="stMetricLabel"] {font-size: 0.75rem !important; text-transform: uppercase; color: #888; letter-spacing: 1px;}

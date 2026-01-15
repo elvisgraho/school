@@ -12,20 +12,20 @@ def render_discovery(db) -> None:
     apply_conservative_style()
 
     # SECTION 1: IN PROGRESS
-    # Only show if there are items
     in_progress_lessons = db.get_in_progress_lessons(limit=10)
     if in_progress_lessons:
         st.markdown('<div class="section-label">Continue Watching</div>', unsafe_allow_html=True)
         for lesson in in_progress_lessons:
-            with st.container():
-                c1, c2 = st.columns([6, 2])
-                with c1:
-                    st.markdown(f"**{lesson['title']}**<br><span class=\"lesson-author\">{lesson['author']}</span>", unsafe_allow_html=True)
-                with c2:
-                    st.button("Resume", key=f"cont_{lesson['id']}", 
-                              on_click=set_lesson, args=(lesson['id'],), width='stretch')
-                st.markdown("---")
-    
+            st.markdown(f"""
+            <a href="?lesson={lesson['id']}" style="text-decoration: none;">
+                <div class="lesson-card">
+                    <div class="lesson-title">{lesson['title']}</div>
+                    <div class="lesson-author">{lesson['author']}</div>
+                </div>
+            </a>
+            """, unsafe_allow_html=True)
+        st.write("")
+
     # SECTION 2: LESSONS OF THE DAY
     st.markdown('<div class="section-label">Lessons of the Day</div>', unsafe_allow_html=True)
     
@@ -33,29 +33,37 @@ def render_discovery(db) -> None:
     
     if lesson_of_day:
         for lesson in lesson_of_day:
-            c1, c2 = st.columns([6, 2])
-            with c1:
-                st.markdown(f"**{lesson['title']}**<br><span class=\"lesson-author\">{lesson['author']}</span>", unsafe_allow_html=True)
-            with c2:
-                st.button("Open", key=f"lod_{lesson['id']}", 
-                          on_click=set_lesson, args=(lesson['id'],), width='stretch')
+            st.markdown(f"""
+            <a href="?lesson={lesson['id']}" style="text-decoration: none;">
+                <div class="lesson-card">
+                    <div class="lesson-title">{lesson['title']}</div>
+                    <div class="lesson-author">{lesson['author']}</div>
+                </div>
+            </a>
+            """, unsafe_allow_html=True)
     else:
         st.info("Library is empty. Please sync.")
 
-    st.markdown("---")
-
-    # SECTION 3: COMPLETED (was Rediscover)
+    # SECTION 3: COMPLETED
     st.markdown('<div class="section-label">Completed Lessons</div>', unsafe_allow_html=True)
     
     completed_lessons, _ = db.get_paginated_lessons(page=1, page_size=10, status_filter=['Completed'])
     
     if completed_lessons:
         for lesson in completed_lessons:
-            c1, c2 = st.columns([6, 2])
-            with c1:
-                st.markdown(f"**{lesson['title']}**<br><span class=\"lesson-author\">{lesson['author']}</span>", unsafe_allow_html=True)
-            with c2:
-                st.button("Review", key=f"comp_{lesson['id']}", 
-                          on_click=set_lesson, args=(lesson['id'],), width='stretch')
+            st.markdown(f"""
+            <a href="?lesson={lesson['id']}" style="text-decoration: none;">
+                <div class="lesson-card">
+                    <div class="lesson-title">{lesson['title']}</div>
+                    <div class="lesson-author">{lesson['author']}</div>
+                </div>
+            </a>
+            """, unsafe_allow_html=True)
     else:
         st.caption("No completed lessons yet.")
+
+    # Handle click navigation
+    if "lesson" in st.query_params:
+        lesson_id = int(st.query_params["lesson"])
+        set_lesson(lesson_id)
+        st.query_params.clear()
