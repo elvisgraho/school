@@ -1,0 +1,21 @@
+[theme]
+# Set base theme to dark
+base = "dark"
+# Primary color - muted industrial blue
+primaryColor = "#3A4A5C"
+# Background color - dark gray
+backgroundColor = "#1E1E1E"
+# Secondary background color
+secondaryBackgroundColor = "#2D2D2D"
+# Text color
+textColor = "#E0E0E0"
+# Font
+font = "sans serif"
+
+[server]
+# Enable WebSocket compression for better performance
+enableWebsocketCompression = true
+# Max upload size in MB
+maxUploadSize = 2048
+# Run on save disabled for production
+runOnSave = false
