@@ -30,5 +30,14 @@ def apply_conservative_style():
                 margin-top: -8px;
                 display: block;
             }
+            /* Remove internal scrollbar from dataframe and expand to full height */
+            [data-testid="stDataFrame"] {
+                max-height: none !important;
+                height: auto !important;
+            }
+            [data-testid="stDataFrame"] .stDataFrameResizable {
+                max-height: none !important;
+                overflow: visible !important;
+            }
         </style>
     """, unsafe_allow_html=True)
