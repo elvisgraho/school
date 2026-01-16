@@ -1,5 +1,6 @@
 """
 Library Tab for Guitar Shed.
+Optimized for 15k+ video libraries with efficient pagination.
 """
 
 import streamlit as st
@@ -9,55 +10,79 @@ from .styles import apply_conservative_style
 from .callbacks import set_lesson
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 
+# Page size for AgGrid - balance between performance and usability
+GRID_PAGE_SIZE = 100
+
+
+def _get_filter_hash(status: str, year: str, month: str, search: str) -> str:
+    """Generate a hash for the current filter state."""
+    return f"{status}|{year}|{month}|{search}"
+
+
 def render_library(db) -> None:
     """Render the Full Library List optimized for large datasets."""
     apply_conservative_style()
-    
-    # 1. Controls
+
+    # Initialize filter state in session
+    if 'lib_filter_hash' not in st.session_state:
+        st.session_state.lib_filter_hash = ""
+
+    # 1. Filter Controls
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
-        status_filter = st.selectbox("Status", ['All', 'New', 'In Progress', 'Completed'], key='lib_status')
+        status_filter = st.selectbox(
+            "Status", ['All', 'New', 'In Progress', 'Completed'], key='lib_status'
+        )
     with c2:
         years = db.get_years_with_lessons()
         current_year = datetime.now().year
         year_options = ['All'] + (years if years else [current_year])
         selected_year = st.selectbox("Year", year_options, key='lib_year')
     with c3:
-        month_options = ['All', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        month_options = ['All', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
         selected_month = st.selectbox("Month", month_options, key='lib_month')
-    
-    search = st.text_input("Search", placeholder="Search by title or author...", key='lib_search')
+
+    search = st.text_input(
+        "Search", placeholder="Search by title or author...", key='lib_search'
+    )
     st.markdown("<hr style='margin: 0.5rem 0; opacity: 0.2;'>", unsafe_allow_html=True)
-    
-    # Logic for filters
+
+    # Build filter parameters
     s_filter = [status_filter] if status_filter != 'All' else None
     y_filter = int(selected_year) if selected_year != 'All' else None
     m_filter = month_options.index(selected_month) if selected_month != 'All' else None
-    
-    # Fetch Data
-    lessons, _ = db.get_paginated_lessons(
-        page=1, 
-        page_size=20000, 
-        status_filter=s_filter, search_query=search,
-        year_filter=y_filter, month_filter=m_filter
+
+    # Check if filters changed - reset grid state if so
+    current_hash = _get_filter_hash(status_filter, str(selected_year), selected_month, search)
+    if current_hash != st.session_state.lib_filter_hash:
+        st.session_state.lib_filter_hash = current_hash
+
+    # Fetch data - limit initial load for performance
+    lessons, total_count = db.get_paginated_lessons(
+        page=1,
+        page_size=15000,  # Load all matching, let AgGrid handle pagination
+        status_filter=s_filter,
+        search_query=search if search else None,
+        year_filter=y_filter,
+        month_filter=m_filter
     )
-    
+
     if not lessons:
         st.info("No lessons found matching criteria.")
         return
 
-    # Prepare DataFrame
+    # Prepare DataFrame efficiently
     df = pd.DataFrame(lessons)
     df['display_date'] = pd.to_datetime(df['lesson_date']).dt.strftime('%Y-%m-%d')
-    cols_to_use = ['id', 'display_date', 'author', 'title', 'status']
 
-    # Prevent SettingWithCopyWarning
-    grid_data = df[cols_to_use].copy()
-    
-    # Build options
+    # Only use needed columns
+    grid_data = df[['id', 'display_date', 'author', 'title', 'status']].copy()
+
+    # Build AgGrid options
     gb = GridOptionsBuilder.from_dataframe(grid_data)
-    
-    # Date Formatter JS
+
+    # Date formatter
     date_formatter = JsCode("""
     function(params) {
         if (params.value) {
@@ -66,36 +91,56 @@ def render_library(db) -> None:
         return "";
     }
     """)
-    gb.configure_column("display_date", header_name="Date", valueFormatter=date_formatter)
+    gb.configure_column("display_date", header_name="Date", valueFormatter=date_formatter,
+                        width=110, minWidth=100, maxWidth=130)
+    gb.configure_column("author", width=150, minWidth=120)
+    gb.configure_column("title", flex=2, minWidth=200)
+    gb.configure_column("status", width=110, minWidth=100, maxWidth=130)
 
-    # Pagination & Layout
-    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=500)
-    gb.configure_grid_options(domLayout='autoHeight') 
-    
-    # Standard settings
-    # --- FIX: Add flex=1 here so columns stretch to fill the table width ---
-    gb.configure_default_column(
-        sortable=True, 
-        filter=True, 
-        resizable=True, 
-        flex=1,          # <--- Forces columns to fill space
-        minWidth=100     # <--- Prevents them from getting too squished
+    # Pagination - smaller page size for better performance
+    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=GRID_PAGE_SIZE)
+    gb.configure_grid_options(
+        domLayout='autoHeight',
+        rowBuffer=20,  # Buffer for smooth scrolling
+        suppressRowClickSelection=False,
+        enableCellTextSelection=True,
     )
-    
+
+    # Default column settings
+    gb.configure_default_column(
+        sortable=True,
+        filter=True,
+        resizable=True,
+    )
+
     gb.configure_selection(selection_mode='single', use_checkbox=False, pre_selected_rows=[])
     gb.configure_column("id", hide=True)
-    
-    grid_options = gb.build()
-    
-    # CSS: Pagination at Top
-    custom_css = {
-        ".ag-root-wrapper": {"display": "flex", "flex-direction": "column-reverse"},
-        ".ag-paging-panel": {"border-top": "0px", "border-bottom": "1px solid #333", "justify-content": "flex-start", "padding-bottom": "10px"}
-    }
-    
-    st.caption(f"Found {len(df)} lessons")
 
-    # Render
+    grid_options = gb.build()
+
+    # CSS: Pagination at top, cleaner styling
+    custom_css = {
+        ".ag-root-wrapper": {
+            "display": "flex",
+            "flex-direction": "column-reverse"
+        },
+        ".ag-paging-panel": {
+            "border-top": "0px",
+            "border-bottom": "1px solid #333",
+            "justify-content": "flex-start",
+            "padding-bottom": "10px"
+        },
+        ".ag-row": {
+            "cursor": "pointer"
+        },
+        ".ag-row:hover": {
+            "background-color": "#2a2a2a !important"
+        }
+    }
+
+    st.caption(f"Found {len(df):,} lessons")
+
+    # Render grid
     response = AgGrid(
         grid_data,
         gridOptions=grid_options,
@@ -104,13 +149,13 @@ def render_library(db) -> None:
         allow_unsafe_jscode=True,
         height=None,
         width='100%',
-        fit_columns_on_grid_load=True, # <--- Also helps ensure full width on load
+        fit_columns_on_grid_load=True,
         key='library_aggrid',
         theme='streamlit',
         custom_css=custom_css
     )
-    
-    # Handle selection
+
+    # Handle row selection
     selected_rows = response.get('selected_rows')
     if selected_rows is not None and len(selected_rows) > 0:
         try:
@@ -118,11 +163,8 @@ def render_library(db) -> None:
                 lesson_id = int(selected_rows.iloc[0]['id'])
             else:
                 lesson_id = int(selected_rows[0]['id'])
-            
+
             set_lesson(lesson_id)
             st.rerun()
         except Exception:
             pass
-
-def render_library_fullscreen(db) -> None:
-    render_library(db)

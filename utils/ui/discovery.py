@@ -73,15 +73,15 @@ def render_discovery(db) -> None:
         for lesson in in_progress_lessons:
             lesson_id = lesson['id']
             label = f"{lesson['title']}\n{lesson['author']}"
-            st.button(label, key=f"inp_{lesson_id}", use_container_width=True, 
+            st.button(label, key=f"inp_{lesson_id}", use_container_width=True,
                      on_click=set_lesson, args=(lesson_id,))
         st.write("")
 
     # SECTION 2: LESSONS OF THE DAY
     st.markdown('<div class="section-label">Lessons of the Day</div>', unsafe_allow_html=True)
-    
+
     lesson_of_day = db.get_lesson_of_day(limit=5)
-    
+
     if lesson_of_day:
         for lesson in lesson_of_day:
             lesson_id = lesson['id']
@@ -93,9 +93,9 @@ def render_discovery(db) -> None:
 
     # SECTION 3: COMPLETED
     st.markdown('<div class="section-label">Completed Lessons</div>', unsafe_allow_html=True)
-    
+
     completed_lessons, _ = db.get_paginated_lessons(page=1, page_size=10, status_filter=['Completed'])
-    
+
     if completed_lessons:
         for lesson in completed_lessons:
             lesson_id = lesson['id']

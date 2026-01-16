@@ -5,25 +5,96 @@ Conservative, precise, text-first aesthetic.
 
 import streamlit as st
 
+# Global app styles - applied once in app.py
+GLOBAL_STYLES = """
+<style>
+    /* Hide Streamlit branding */
+    #MainMenu, footer, header {visibility: hidden !important;}
+
+    /* Main container */
+    .block-container {padding-top: 2rem; max-width: 98%;}
+
+    /* Sidebar */
+    [data-testid="stSidebar"] {background-color: #1a1a1a; border-right: 1px solid #333;}
+
+    /* Tab Styling */
+    .stTabs [data-baseweb="tab-list"] {gap: 0.5rem; border-bottom: 1px solid #333; padding: 0 1rem;}
+    .stTabs [data-baseweb="tab"] {
+        height: 48px;
+        padding: 0 1.5rem;
+        background-color: transparent;
+        border: none;
+        border-radius: 0;
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: #888;
+        transition: all 0.2s;
+    }
+    .stTabs [data-baseweb="tab"]:hover {color: #ccc; background-color: #2a2a2a;}
+    .stTabs [aria-selected="true"] {
+        background-color: transparent !important;
+        color: #fff !important;
+        border-bottom: 2px solid #3A4A5C !important;
+    }
+    .stTabs [data-baseweb="tab-list"] button[aria-selected="false"] {opacity: 0.6;}
+
+    /* Metrics */
+    [data-testid="stMetricValue"] {font-size: 1.25rem !important; color: #fff;}
+    [data-testid="stMetricLabel"] {
+        font-size: 0.75rem !important;
+        text-transform: uppercase;
+        color: #888;
+        letter-spacing: 1px;
+    }
+
+    /* Typography */
+    h1, h2, h3 {font-weight: 600; color: #eee; font-family: 'Helvetica', sans-serif;}
+
+    /* Button base styling */
+    .stButton > button {
+        background-color: #222;
+        border: 1px solid #444;
+        color: #ccc;
+        border-radius: 4px;
+        transition: all 0.2s;
+        font-weight: 500;
+    }
+    .stButton > button:hover {
+        background-color: #333;
+        border-color: #666;
+        color: #fff;
+    }
+
+    /* DataFrames */
+    [data-testid="stDataFrame"] {border: 1px solid #333;}
+</style>
+"""
+
+
+def apply_global_styles():
+    """Apply global app styles - call once in app.py."""
+    st.markdown(GLOBAL_STYLES, unsafe_allow_html=True)
+
 
 def apply_conservative_style():
-    """Applies minimal, clean styling adjustments."""
+    """Applies minimal, clean styling adjustments for content areas."""
     st.markdown("""
         <style>
-            /* Tighten spacing for a precise look */
-            .block-container { padding-top: 2rem; padding-bottom: 3rem; }
-            h1, h2, h3 { font-family: 'Helvetica', 'Arial', sans-serif; font-weight: 600; letter-spacing: -0.5px; }
-            .stButton button { border-radius: 4px; font-weight: 500; }
-            hr { margin-top: 1rem; margin-bottom: 1rem; border-color: #eee; }
-            .section-label { 
-                font-size: 0.9rem; 
-                text-transform: uppercase; 
-                letter-spacing: 1px; 
-                color: #888; 
-                margin-bottom: 0.5rem; 
+            /* Tighten spacing */
+            .block-container { padding-bottom: 3rem; }
+            hr { margin-top: 1rem; margin-bottom: 1rem; border-color: #333; }
+
+            /* Section labels */
+            .section-label {
+                font-size: 0.9rem;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                color: #888;
+                margin-bottom: 0.5rem;
                 font-weight: 600;
             }
-            /* Clickable lesson card */
+
+            /* Lesson cards (used in discovery) */
             .lesson-card {
                 background: #2D2D2D;
                 border: 1px solid #3D3D3D;
@@ -32,7 +103,6 @@ def apply_conservative_style():
                 margin-bottom: 8px;
                 cursor: pointer;
                 transition: all 0.15s ease;
-                text-decoration: none !important;
             }
             .lesson-card:hover {
                 background: #3D3D3D;
@@ -49,14 +119,8 @@ def apply_conservative_style():
                 color: #A0A0A0;
                 margin: 4px 0 0 0;
             }
-            /* Tight spacing for lesson author */
-            .lesson-author-inline {
-                font-size: 0.85rem;
-                color: #888;
-                margin-top: -8px;
-                display: block;
-            }
-            /* Remove internal scrollbar from dataframe and expand to full height */
+
+            /* Remove internal scrollbar from dataframe */
             [data-testid="stDataFrame"] {
                 max-height: none !important;
                 height: auto !important;

@@ -9,6 +9,7 @@ import os
 import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
+import threading
 
 
 DB_FILE = 'progress.db'
@@ -18,10 +19,50 @@ DEFAULT_PAGE_SIZE = 9999
 
 class DatabaseManager:
     """SQLite database manager for guitar lesson progress tracking."""
-    
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, db_path: str = DB_FILE):
+        """Singleton pattern to reuse database connections."""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
     def __init__(self, db_path: str = DB_FILE):
+        if self._initialized:
+            return
         self.db_path = db_path
+        self._cache = {}
+        self._cache_timestamp = {}
+        self._cache_ttl = 5  # seconds
         self._init_db()
+        self._initialized = True
+
+    def _is_cache_valid(self, key: str) -> bool:
+        """Check if cached data is still valid."""
+        if key not in self._cache_timestamp:
+            return False
+        return (datetime.now() - self._cache_timestamp[key]).total_seconds() < self._cache_ttl
+
+    def _set_cache(self, key: str, value: Any) -> None:
+        """Store value in cache with timestamp."""
+        self._cache[key] = value
+        self._cache_timestamp[key] = datetime.now()
+
+    def _get_cache(self, key: str) -> Optional[Any]:
+        """Get value from cache if valid."""
+        if self._is_cache_valid(key):
+            return self._cache.get(key)
+        return None
+
+    def invalidate_cache(self) -> None:
+        """Clear all caches - call after mutations."""
+        self._cache.clear()
+        self._cache_timestamp.clear()
     
     def _get_connection(self) -> sqlite3.Connection:
         """Get a database connection with row factory."""
@@ -260,15 +301,16 @@ class DatabaseManager:
         """Update lesson status."""
         if status not in ('New', 'In Progress', 'Completed'):
             return False
-        
+
         completed_at = datetime.now() if status == 'Completed' else None
-        
+
         with self._get_connection() as conn:
             conn.execute('''
                 UPDATE lessons SET status = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             ''', (status, completed_at, lesson_id))
-        
+
+        self.invalidate_cache()
         return True
     
     def get_lesson_by_id(self, lesson_id: int) -> Optional[Dict[str, Any]]:
@@ -280,26 +322,33 @@ class DatabaseManager:
             return dict(row) if row else None
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get overall statistics."""
+        """Get overall statistics (cached)."""
+        cache_key = 'stats'
+        cached = self._get_cache(cache_key)
+        if cached is not None:
+            return cached
+
         with self._get_connection() as conn:
             rows = conn.execute('''
-                SELECT status, COUNT(*) as cnt 
-                FROM lessons 
-                WHERE status != 'Archived' 
+                SELECT status, COUNT(*) as cnt
+                FROM lessons
+                WHERE status != 'Archived'
                 GROUP BY status
             ''').fetchall()
-            
+
             counts = {row['status']: row['cnt'] for row in rows}
             total = sum(counts.values())
             completed = counts.get('Completed', 0)
-            
-            return {
+
+            result = {
                 'total': total,
                 'completed': completed,
                 'in_progress': counts.get('In Progress', 0),
                 'new': counts.get('New', 0),
                 'completion_rate': (completed / total * 100) if total > 0 else 0
             }
+            self._set_cache(cache_key, result)
+            return result
     
     def get_activity_data(self, days: int = 365) -> List[Dict[str, Any]]:
         """Get completion activity data."""
@@ -435,7 +484,12 @@ class DatabaseManager:
             return result
     
     def get_years_with_lessons(self) -> List[int]:
-        """Get list of years with lessons."""
+        """Get list of years with lessons (cached)."""
+        cache_key = 'years'
+        cached = self._get_cache(cache_key)
+        if cached is not None:
+            return cached
+
         with self._get_connection() as conn:
             rows = conn.execute('''
                 SELECT DISTINCT CAST(strftime('%Y', lesson_date) AS INTEGER) as year
@@ -443,10 +497,17 @@ class DatabaseManager:
                 WHERE status != 'Archived'
                 ORDER BY year DESC
             ''').fetchall()
-            return [row[0] for row in rows]
+            result = [row[0] for row in rows]
+            self._set_cache(cache_key, result)
+            return result
 
     def get_in_progress_lessons(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get in-progress lessons ordered by most recently started."""
+        """Get in-progress lessons ordered by most recently started (cached)."""
+        cache_key = f'in_progress_{limit}'
+        cached = self._get_cache(cache_key)
+        if cached is not None:
+            return cached
+
         with self._get_connection() as conn:
             rows = conn.execute('''
                 SELECT * FROM lessons
@@ -454,7 +515,9 @@ class DatabaseManager:
                 ORDER BY updated_at DESC
                 LIMIT ?
             ''', (limit,)).fetchall()
-            return [dict(row) for row in rows]
+            result = [dict(row) for row in rows]
+            self._set_cache(cache_key, result)
+            return result
 
     def get_recent_completions(self, limit: int = 5) -> List[Dict[str, Any]]:
         """Get the most recently completed lessons."""

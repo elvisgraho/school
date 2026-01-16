@@ -11,7 +11,7 @@ Submodules:
 - analytics: Analytics tab
 """
 
-from .styles import apply_conservative_style
+from .styles import apply_conservative_style, apply_global_styles
 from .callbacks import set_lesson, clear_lesson, update_status_callback
 from .practice import render_practice_room
 from .discovery import render_discovery
@@ -20,6 +20,7 @@ from .analytics import render_analytics
 
 __all__ = [
     'apply_conservative_style',
+    'apply_global_styles',
     'set_lesson',
     'clear_lesson',
     'update_status_callback',

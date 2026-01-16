@@ -3,12 +3,12 @@ import os
 import tkinter as tk
 from tkinter import filedialog
 from utils import DatabaseManager, parse_filename
-# Added render_practice_room to imports
-from utils.ui import render_discovery, render_library, render_analytics, render_practice_room
+from utils.ui import (
+    render_discovery, render_library, render_analytics,
+    render_practice_room, apply_global_styles
+)
 
-# Initialize
-db = DatabaseManager()
-
+# Page config must be first Streamlit command
 st.set_page_config(
     page_title="Guitar Shed",
     page_icon=None,
@@ -16,59 +16,41 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Minimal CSS (Theme Adjusted - Conservative/Precise)
-st.markdown("""
-<style>
-    #MainMenu, footer, header {visibility: hidden !important;}
-    .block-container {padding-top: 2rem; max-width: 98%;}
-    [data-testid="stSidebar"] {background-color: #1a1a1a; border-right: 1px solid #333;}
-    /* Tab Styling - Clean & Spaced */
-    .stTabs [data-baseweb="tab-list"] {gap: 0.5rem; border-bottom: 1px solid #333; padding: 0 1rem;}
-    .stTabs [data-baseweb="tab"] {
-        height: 48px;
-        padding: 0 1.5rem;
-        background-color: transparent;
-        border: none;
-        border-radius: 0;
-        font-size: 0.9rem;
-        font-weight: 500;
-        color: #888;
-        transition: all 0.2s;
-    }
-    .stTabs [data-baseweb="tab"]:hover {color: #ccc; background-color: #2a2a2a;}
-    .stTabs [aria-selected="true"] {
-        background-color: transparent !important;
-        color: #fff !important;
-        border-bottom: 2px solid #3A4A5C !important;
-    }
-    .stTabs [data-baseweb="tab-list"] button[aria-selected="false"] {opacity: 0.6;}
-    [data-testid="stDataFrame"] {border: 1px solid #333;}
-    [data-testid="stMetricValue"] {font-size: 1.25rem !important; color: #fff;}
-    [data-testid="stMetricLabel"] {font-size: 0.75rem !important; text-transform: uppercase; color: #888; letter-spacing: 1px;}
-    h1, h2, h3 {font-weight: 600; color: #eee; font-family: 'Helvetica', sans-serif;}
-    /* Button Styling */
-    .stButton > button {background-color: #222; border: 1px solid #444; color: #ccc; border-radius: 2px; transition: all 0.2s;}
-    .stButton > button:hover {background-color: #333; border-color: #666; color: #fff;}
-</style>
-""", unsafe_allow_html=True)
 
-# Session state
-if 'folder_path' not in st.session_state:
-    st.session_state.folder_path = ''
-if 'selected_lesson_id' not in st.session_state:
-    st.session_state.selected_lesson_id = None
-if 'db_synced' not in st.session_state:
-    st.session_state.db_synced = False
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = 1
-if 'metronome_bpm' not in st.session_state:
-    st.session_state.metronome_bpm = 120
-if 'active_tab' not in st.session_state:
-    st.session_state.active_tab = 'discovery'
+@st.cache_resource
+def get_database():
+    """Get singleton database instance (cached across reruns)."""
+    return DatabaseManager()
+
+
+db = get_database()
+
+# Apply global styles from centralized module
+apply_global_styles()
+
+def _init_session_state():
+    """Initialize all session state variables."""
+    defaults = {
+        'folder_path': '',
+        'selected_lesson_id': None,
+        'db_synced': False,
+        'current_page': 1,
+        'metronome_bpm': 120,
+        'active_tab': 'discovery',
+    }
+    for key, default_value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+
+
+_init_session_state()
+
 
 def sync_db():
+    """Sync database with folder and invalidate caches."""
     if st.session_state.folder_path and os.path.isdir(st.session_state.folder_path):
         stats = db.sync_folder(st.session_state.folder_path, parse_filename)
+        db.invalidate_cache()
         st.session_state.db_synced = True
         return stats
     return None
@@ -225,28 +207,25 @@ def render_sidebar():
 
 
 def main():
+    """Main application entry point."""
     render_sidebar()
-    
-    # === MAIN LOGIC FIX ===
-    # If a lesson is selected, ONLY render the practice room.
-    # This prevents the tabs from rendering and resetting the state.
+
+    # If a lesson is selected, render the practice room exclusively
     if st.session_state.get('selected_lesson_id'):
         render_practice_room(db)
-        
-    else:
-        # No video selected -> Show Dashboard
-        # Icons removed for conservative design
-        t1, t2, t3 = st.tabs(["DISCOVERY", "LIBRARY", "ANALYTICS"])
-        
-        with t1:
-            st.session_state.active_tab = 'discovery'
-            render_discovery(db)
-        with t2:
-            st.session_state.active_tab = 'library'
-            render_library(db)
-        with t3:
-            st.session_state.active_tab = 'analytics'
-            render_analytics(db)
+        return
+
+    # Main dashboard with tabs
+    tab_discovery, tab_library, tab_analytics = st.tabs(["DISCOVERY", "LIBRARY", "ANALYTICS"])
+
+    with tab_discovery:
+        render_discovery(db)
+
+    with tab_library:
+        render_library(db)
+
+    with tab_analytics:
+        render_analytics(db)
 
 
 if __name__ == "__main__":
