@@ -55,16 +55,16 @@ def render_analytics(db) -> None:
         df_heat['day_of_week'] = df_heat['date'].dt.day_name()
         df_heat['day_index'] = df_heat['date'].dt.weekday  # 0=Mon, 6=Sun
 
-        heatmap = alt.Chart(df_heat).mark_rect(stroke='white', strokeWidth=2).encode(
+        heatmap = alt.Chart(df_heat).mark_rect(stroke='#1a1a1a', strokeWidth=2).encode(
             x=alt.X('week_cont:O', axis=None, title=None),
             y=alt.Y('day_index:O', axis=None, title=None, scale=alt.Scale(reverse=True)),
-            color=alt.Color('count:Q', 
-                            scale=alt.Scale(range=['#EDF2F7', '#48BB78', '#2F855A']), # Grey to Light Green to Dark Green
+            color=alt.Color('count:Q',
+                            scale=alt.Scale(range=['#2D2D2D', '#48BB78', '#2F855A']),
                             legend=None),
             tooltip=[alt.Tooltip('date', title='Date', format='%b %d, %Y'), 'count']
         ).properties(
             height=120,
-            title="" 
+            title=""
         ).configure_view(strokeWidth=0)
         
         st.altair_chart(heatmap, width='stretch')
@@ -171,9 +171,9 @@ def render_analytics(db) -> None:
             # Minimalistic row
             date_str = datetime.strptime(r['completed_at'], '%Y-%m-%d %H:%M:%S').strftime('%b %d')
             st.markdown(f"""
-            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #E2E8F0; padding: 8px 0; font-size: 0.9rem;">
-                <span style="color: #2D3748; font-weight: 500;">{r['title']}</span>
-                <span style="color: #718096;">{date_str}</span>
+            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding: 8px 0; font-size: 0.9rem;">
+                <span style="color: #E0E0E0; font-weight: 500;">{r['title']}</span>
+                <span style="color: #888;">{date_str}</span>
             </div>
             """, unsafe_allow_html=True)
     else:

@@ -5,6 +5,7 @@ Optimized for smooth playback and responsive controls.
 
 import streamlit as st
 import os
+import urllib.parse
 from .callbacks import clear_lesson, update_status_callback
 
 # Status display styling
@@ -33,12 +34,9 @@ def render_practice_room(db) -> None:
         st.button("Return to Library", on_click=clear_lesson, type="primary")
         return
 
-    # Top bar: Close button and title
-    col_back, col_title = st.columns([1, 11])
-    with col_back:
-        st.button("Back", on_click=clear_lesson, use_container_width=True)
-    with col_title:
-        st.markdown(f"### {lesson['title']}")
+    # Top bar: Back button aligned with title
+    st.button("← Back to Library", on_click=clear_lesson)
+    st.markdown(f"### {lesson['title']}")
 
     # Video Player
     video_path = lesson.get('filepath', '')
@@ -47,60 +45,59 @@ def render_practice_room(db) -> None:
     else:
         st.error(f"Video file not found: {lesson.get('filename', 'Unknown')}")
         st.caption(f"Expected path: {video_path}")
+        st.info("The file may have been moved or deleted. Try syncing your library again.")
         return
 
-    # Metadata row
-    status_color = STATUS_COLORS.get(lesson['status'], '#888')
+    # Metadata and actions row
+    current_status = lesson['status']
+    status_color = STATUS_COLORS.get(current_status, '#888')
+
+    # Combined metadata + buttons in one clean row
     st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center;
-                    padding: 12px 0; border-bottom: 1px solid #333; margin-bottom: 16px;">
-            <div>
+                    padding: 8px 0; margin-bottom: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="color: #aaa;">By</span>
                 <span style="color: #fff; font-weight: 500;">{lesson['author']}</span>
-                <span style="color: #555; margin: 0 8px;">|</span>
+                <span style="color: #555;">|</span>
                 <span style="color: #aaa;">{lesson['lesson_date']}</span>
-            </div>
-            <div style="background: {status_color}22; color: {status_color};
-                        padding: 4px 12px; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
-                {lesson['status']}
+                <span style="color: #555;">|</span>
+                <span style="background: {status_color}22; color: {status_color};
+                            padding: 2px 8px; border-radius: 4px; font-size: 0.85rem;">
+                    {current_status}
+                </span>
             </div>
         </div>
     """, unsafe_allow_html=True)
 
-    # Action buttons based on status
-    current_status = lesson['status']
-    col_action, col_secondary, _ = st.columns([2, 2, 6])
+    # Action buttons - compact row
+    youtube_query = urllib.parse.quote_plus(lesson['title'])
+    youtube_url = f"https://www.youtube.com/results?search_query={youtube_query}"
 
-    with col_action:
-        if current_status == 'New':
-            st.button(
-                "Start Practice",
-                type="primary",
-                on_click=update_status_callback,
-                args=(db, lesson['id'], 'In Progress'),
-                use_container_width=True
-            )
-        elif current_status == 'In Progress':
-            st.button(
-                "Mark Completed",
-                type="primary",
-                on_click=update_status_callback,
-                args=(db, lesson['id'], 'Completed'),
-                use_container_width=True
-            )
-        elif current_status == 'Completed':
-            st.button(
-                "Practice Again",
-                on_click=update_status_callback,
-                args=(db, lesson['id'], 'In Progress'),
-                use_container_width=True
-            )
-
-    with col_secondary:
-        if current_status != 'New':
-            st.button(
-                "Reset to New",
-                on_click=update_status_callback,
-                args=(db, lesson['id'], 'New'),
-                use_container_width=True
-            )
+    if current_status == 'New':
+        cols = st.columns([1, 1, 3])
+        with cols[0]:
+            st.button("Start Practice", type="primary", on_click=update_status_callback,
+                      args=(db, lesson['id'], 'In Progress'), use_container_width=True)
+        with cols[1]:
+            st.link_button("YouTube", youtube_url, use_container_width=True)
+    elif current_status == 'In Progress':
+        cols = st.columns([1, 1, 1, 2])
+        with cols[0]:
+            st.button("Mark Completed", type="primary", on_click=update_status_callback,
+                      args=(db, lesson['id'], 'Completed'), use_container_width=True)
+        with cols[1]:
+            st.button("Reset to New", on_click=update_status_callback,
+                      args=(db, lesson['id'], 'New'), use_container_width=True)
+        with cols[2]:
+            st.link_button("YouTube", youtube_url, use_container_width=True)
+    else:  # Completed
+        cols = st.columns([1, 1, 1, 2])
+        with cols[0]:
+            st.button("Practice Again", type="primary", on_click=update_status_callback,
+                      args=(db, lesson['id'], 'In Progress'), use_container_width=True)
+        with cols[1]:
+            st.button("Reset to New", on_click=update_status_callback,
+                      args=(db, lesson['id'], 'New'), use_container_width=True)
+        with cols[2]:
+            st.link_button("YouTube", youtube_url, use_container_width=True)

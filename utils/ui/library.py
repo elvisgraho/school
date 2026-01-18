@@ -57,11 +57,17 @@ def render_library(db) -> None:
     current_hash = _get_filter_hash(status_filter, str(selected_year), selected_month, search)
     if current_hash != st.session_state.lib_filter_hash:
         st.session_state.lib_filter_hash = current_hash
+        # Force new grid key to reset AgGrid state on filter change
+        st.session_state.lib_grid_key = f"library_aggrid_{hash(current_hash)}"
 
-    # Fetch data - limit initial load for performance
+    # Ensure grid key exists
+    if 'lib_grid_key' not in st.session_state:
+        st.session_state.lib_grid_key = "library_aggrid_default"
+
+    # Fetch data - limit to reasonable size for ag-grid performance with 15k+ libraries
     lessons, total_count = db.get_paginated_lessons(
         page=1,
-        page_size=15000,  # Load all matching, let AgGrid handle pagination
+        page_size=500,  # Limit initial load - ag-grid handles client-side pagination
         status_filter=s_filter,
         search_query=search if search else None,
         year_filter=y_filter,
@@ -78,6 +84,12 @@ def render_library(db) -> None:
 
     # Only use needed columns
     grid_data = df[['id', 'display_date', 'author', 'title', 'status']].copy()
+
+    # Show count with indicator if results are capped
+    if len(df) >= 500:
+        st.caption(f"Showing first 500 of {total_count:,} matching lessons. Use filters to narrow results.")
+    else:
+        st.caption(f"Found {len(df):,} lessons")
 
     # Build AgGrid options
     gb = GridOptionsBuilder.from_dataframe(grid_data)
@@ -138,19 +150,17 @@ def render_library(db) -> None:
         }
     }
 
-    st.caption(f"Found {len(df):,} lessons")
-
-    # Render grid
+    # Render grid with static key
     response = AgGrid(
         grid_data,
         gridOptions=grid_options,
-        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        update_mode=GridUpdateMode.MODEL_CHANGED,
         data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
         allow_unsafe_jscode=True,
         height=None,
         width='100%',
         fit_columns_on_grid_load=True,
-        key='library_aggrid',
+        key="library_grid",
         theme='streamlit',
         custom_css=custom_css
     )

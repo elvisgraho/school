@@ -14,7 +14,6 @@ import threading
 
 DB_FILE = 'progress.db'
 PAGE_SIZE = 50
-DEFAULT_PAGE_SIZE = 9999
 
 
 class DatabaseManager:
@@ -108,8 +107,13 @@ class DatabaseManager:
                 ON lessons(lesson_date)
             ''')
             conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_lessons_completed_at 
+                CREATE INDEX IF NOT EXISTS idx_lessons_completed_at
                 ON lessons(completed_at)
+            ''')
+            # Composite index for common filtered queries (status + date sorting)
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_lessons_status_date
+                ON lessons(status, lesson_date DESC)
             ''')
     
     def sync_folder(self, folder_path: str, parse_func) -> Dict[str, Any]:
