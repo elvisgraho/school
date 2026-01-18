@@ -1,10 +1,17 @@
 """
 Discovery Tab for Guitar Shed.
+Enhanced with streak display, daily goals, and smart suggestions.
 """
 
 import streamlit as st
+from datetime import datetime
 from .styles import apply_conservative_style
 from .callbacks import set_lesson
+from .components import (
+    render_streak_display,
+    render_progress_ring,
+    render_weekly_progress_bar,
+)
 
 
 def render_discovery(db) -> None:
@@ -66,41 +73,108 @@ def render_discovery(db) -> None:
         </style>
     """, unsafe_allow_html=True)
 
-    # SECTION 1: IN PROGRESS
+    # SECTION 0: STREAK AND GOALS
+    streak_info = db.get_streak_recovery_info()
+    daily_progress = db.get_daily_progress()
+    weekly_progress = db.get_weekly_progress()
+
+    # Streak Display
+    render_streak_display(
+        current=streak_info['current'],
+        best=streak_info['best'],
+        recovery_info=streak_info
+    )
+
+    # Daily and Weekly Goals in columns
+    col1, col2 = st.columns(2)
+    with col1:
+        render_progress_ring(
+            current=daily_progress['completed'],
+            goal=daily_progress['goal'],
+            label="Today"
+        )
+    with col2:
+        st.markdown("<div style='padding-top: 8px;'></div>", unsafe_allow_html=True)
+        render_weekly_progress_bar(
+            current=weekly_progress['completed'],
+            goal=weekly_progress['goal']
+        )
+
+    st.markdown("---")
+
+    # SECTION 1: IN PROGRESS (prioritized)
     in_progress_lessons = db.get_in_progress_lessons(limit=10)
     if in_progress_lessons:
         st.markdown('<div class="section-label">Continue Watching</div>', unsafe_allow_html=True)
         for lesson in in_progress_lessons:
             lesson_id = lesson['id']
             label = f"{lesson['title']}\n{lesson['author']}"
-            st.button(label, key=f"inp_{lesson_id}", use_container_width=True,
+            st.button(label, key=f"inp_{lesson_id}", width='stretch',
                      on_click=set_lesson, args=(lesson_id,))
         st.write("")
 
-    # SECTION 2: LESSONS OF THE DAY
-    st.markdown('<div class="section-label">Lessons of the Day</div>', unsafe_allow_html=True)
+    # SECTION 2: SMART SUGGESTIONS (prioritizes In Progress, then New)
+    st.markdown('<div class="section-label">Suggested for You</div>', unsafe_allow_html=True)
 
-    lesson_of_day = db.get_lesson_of_day(limit=5)
+    priority_lessons = db.get_priority_suggestions(limit=5)
 
-    if lesson_of_day:
-        for lesson in lesson_of_day:
+    if priority_lessons:
+        for lesson in priority_lessons:
             lesson_id = lesson['id']
-            label = f"{lesson['title']}\n{lesson['author']}"
-            st.button(label, key=f"day_{lesson_id}", use_container_width=True,
+            status_badge = "[In Progress] " if lesson['status'] == 'In Progress' else ""
+            label = f"{status_badge}{lesson['title']}\n{lesson['author']}"
+            st.button(label, key=f"sug_{lesson_id}", width='stretch',
                      on_click=set_lesson, args=(lesson_id,))
     else:
         st.info("Library is empty. Please sync.")
 
-    # SECTION 3: COMPLETED
-    st.markdown('<div class="section-label">Completed Lessons</div>', unsafe_allow_html=True)
+    st.write("")
 
-    completed_lessons, _ = db.get_paginated_lessons(page=1, page_size=10, status_filter=['Completed'])
+    # SECTION 3: TIME TO REVIEW (Spaced Repetition)
+    spaced_suggestions = db.get_spaced_repetition_suggestions()
+    has_suggestions = any(lessons for lessons in spaced_suggestions.values())
+
+    if has_suggestions:
+        st.markdown('<div class="section-label">Time to Review</div>', unsafe_allow_html=True)
+
+        interval_labels = {
+            '1_week': '1 Week Ago',
+            '1_month': '1 Month Ago',
+            '3_months': '3 Months Ago',
+            '6_months': '6 Months Ago',
+            '1_year': '1 Year Ago'
+        }
+
+        for interval_key, interval_label in interval_labels.items():
+            lessons = spaced_suggestions.get(interval_key, [])
+            if lessons:
+                st.caption(interval_label)
+                for lesson in lessons[:2]:  # Max 2 per interval
+                    lesson_id = lesson['id']
+                    completed_date = lesson.get('completed_at', '')
+                    if completed_date:
+                        try:
+                            date_obj = datetime.strptime(completed_date, '%Y-%m-%d %H:%M:%S')
+                            date_str = date_obj.strftime('%b %d, %Y')
+                        except ValueError:
+                            date_str = ''
+                    else:
+                        date_str = ''
+                    label = f"{lesson['title']}\n{lesson['author']}" + (f" - Completed {date_str}" if date_str else "")
+                    st.button(label, key=f"rev_{interval_key}_{lesson_id}", width='stretch',
+                             on_click=set_lesson, args=(lesson_id,))
+        st.write("")
+
+    # SECTION 4: RECENTLY COMPLETED
+    st.markdown('<div class="section-label">Recently Completed</div>', unsafe_allow_html=True)
+
+    completed_lessons, _ = db.get_paginated_lessons(page=1, page_size=5, status_filter=['Completed'])
 
     if completed_lessons:
         for lesson in completed_lessons:
             lesson_id = lesson['id']
             label = f"{lesson['title']}\n{lesson['author']}"
-            st.button(label, key=f"comp_{lesson_id}", use_container_width=True,
+            st.button(label, key=f"comp_{lesson_id}", width='stretch',
                      on_click=set_lesson, args=(lesson_id,))
     else:
         st.caption("No completed lessons yet.")

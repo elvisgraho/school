@@ -1,6 +1,7 @@
 """
 Analytics Tab for Guitar Shed.
 Provides insights into practice consistency, volume, and library progress.
+Enhanced with interactive heatmap, personal records, and dashboard widgets.
 """
 
 import streamlit as st
@@ -8,67 +9,174 @@ import pandas as pd
 import altair as alt
 from datetime import datetime, timedelta
 from .styles import apply_conservative_style
+from .components import (
+    render_progress_ring_compact,
+    render_mini_bar_chart,
+    render_trend_indicator,
+    render_personal_record_card,
+)
+
 
 def render_analytics(db) -> None:
     """Render Analytics with a focus on consistency and progress trends."""
     apply_conservative_style()
-    
+
     # --- Data Fetching ---
     stats = db.get_stats()
-    streak = db.get_current_streak()
+    streak_info = db.get_streak_recovery_info()
     activity_365 = db.get_activity_data(days=365)
-    
+    daily_progress = db.get_daily_progress()
+    weekly_progress = db.get_weekly_progress()
+
     # --- Section 1: Top Level Metrics ---
     st.markdown('<div class="section-label">Snapshot</div>', unsafe_allow_html=True)
-    
+
     # Calculate "Active Days" (days with at least 1 completion in last 30 days)
     today = datetime.now().date()
     start_30 = today - timedelta(days=30)
-    active_days_count = sum(1 for x in activity_365 
+    active_days_count = sum(1 for x in activity_365
                             if datetime.strptime(x['date'], '%Y-%m-%d').date() >= start_30)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Library", stats['total'])
     c2.metric("Total Completed", stats['completed'])
-    c3.metric("Current Streak", f"{streak} Days")
+    c3.metric("Current Streak", f"{streak_info['current']} Days")
     c4.metric("Active Days (30d)", f"{active_days_count}")
-    
+
     st.markdown("---")
 
-    # --- Section 2: Consistency Heatmap (GitHub Style) ---
-    st.markdown('<div class="section-label">Consistency Map (Last 12 Months)</div>', unsafe_allow_html=True)
-    
-    if activity_365:
-        df_heat = pd.DataFrame(activity_365)
-        df_heat['date'] = pd.to_datetime(df_heat['date'])
-        
-        # Create a full date range to fill gaps
-        date_range = pd.date_range(end=datetime.now(), periods=365)
-        df_full = pd.DataFrame({'date': date_range})
-        df_heat = pd.merge(df_full, df_heat, on='date', how='left').fillna({'count': 0})
-        
-        # Extract plotting helpers
-        df_heat['week'] = df_heat['date'].dt.isocalendar().week
-        df_heat['year'] = df_heat['date'].dt.year
-        # Adjust week to be continuous for plotting across year boundary
-        df_heat['week_cont'] = df_heat.apply(lambda x: x['week'] if x['year'] == date_range[-1].year else x['week'] - 52, axis=1)
-        df_heat['day_of_week'] = df_heat['date'].dt.day_name()
-        df_heat['day_index'] = df_heat['date'].dt.weekday  # 0=Mon, 6=Sun
+    # --- Section 1.5: Progress Dashboard Widgets ---
+    st.markdown('<div class="section-label">Progress Dashboard</div>', unsafe_allow_html=True)
 
-        heatmap = alt.Chart(df_heat).mark_rect(stroke='#1a1a1a', strokeWidth=2).encode(
-            x=alt.X('week_cont:O', axis=None, title=None),
-            y=alt.Y('day_index:O', axis=None, title=None, scale=alt.Scale(reverse=True)),
-            color=alt.Color('count:Q',
-                            scale=alt.Scale(range=['#2D2D2D', '#48BB78', '#2F855A']),
-                            legend=None),
-            tooltip=[alt.Tooltip('date', title='Date', format='%b %d, %Y'), 'count']
-        ).properties(
-            height=120,
-            title=""
-        ).configure_view(strokeWidth=0)
-        
-        st.altair_chart(heatmap, width='stretch')
-        st.caption("Darker squares indicate higher volume of completions.")
+    w1, w2, w3 = st.columns(3)
+
+    with w1:
+        render_progress_ring_compact(
+            current=daily_progress['completed'],
+            goal=daily_progress['goal'],
+            label="Daily Goal"
+        )
+
+    with w2:
+        st.markdown("<div style='font-size: 0.85rem; color: #888; margin-bottom: 6px;'>This Week</div>", unsafe_allow_html=True)
+        last_7_days = db.get_last_7_days_activity()
+        render_mini_bar_chart(last_7_days, height=60)
+
+    with w3:
+        monthly_comp = db.get_monthly_comparison()
+        render_trend_indicator(
+            current=monthly_comp['current'],
+            previous=monthly_comp['previous'],
+            label="This Month"
+        )
+
+    st.markdown("---")
+
+    # --- Section 2: Consistency Heatmap (GitHub Style) with Year Navigation ---
+    available_years = db.get_available_years_for_heatmap()
+    current_year = datetime.now().year
+
+    # Year selection
+    col_label, col_select = st.columns([3, 1])
+    with col_label:
+        st.markdown('<div class="section-label">Consistency Map</div>', unsafe_allow_html=True)
+    with col_select:
+        if available_years:
+            # Add current year if not in list
+            if current_year not in available_years:
+                available_years = [current_year] + available_years
+            selected_year = st.selectbox("Year", available_years, index=0, label_visibility="collapsed")
+        else:
+            selected_year = current_year
+
+    # Initialize session state for selected date
+    if 'heatmap_selected_date' not in st.session_state:
+        st.session_state.heatmap_selected_date = None
+
+    if activity_365 or selected_year != current_year:
+        # Get activity data for selected year
+        if selected_year == current_year:
+            activity_data = activity_365
+        else:
+            activity_data = db.get_activity_data_for_year(selected_year)
+
+        if activity_data:
+            df_heat = pd.DataFrame(activity_data)
+            df_heat['date'] = pd.to_datetime(df_heat['date'])
+
+            # Create a full date range for the year
+            if selected_year == current_year:
+                date_range = pd.date_range(end=datetime.now(), periods=365)
+            else:
+                date_range = pd.date_range(start=f'{selected_year}-01-01', end=f'{selected_year}-12-31')
+
+            df_full = pd.DataFrame({'date': date_range})
+            df_heat = pd.merge(df_full, df_heat, on='date', how='left').fillna({'count': 0})
+
+            # Extract plotting helpers
+            df_heat['week'] = df_heat['date'].dt.isocalendar().week
+            df_heat['year'] = df_heat['date'].dt.year
+            df_heat['week_cont'] = df_heat.apply(
+                lambda x: x['week'] if x['year'] == date_range[-1].year else x['week'] - 52, axis=1)
+            df_heat['day_of_week'] = df_heat['date'].dt.day_name()
+            df_heat['day_index'] = df_heat['date'].dt.weekday
+            df_heat['date_str'] = df_heat['date'].dt.strftime('%Y-%m-%d')
+
+            # 4-level color scale: 0 (gray), 1 (light green), 2 (medium green), 3+ (dark green)
+            heatmap = alt.Chart(df_heat).mark_rect(stroke='#1a1a1a', strokeWidth=2).encode(
+                x=alt.X('week_cont:O', axis=None, title=None),
+                y=alt.Y('day_index:O', axis=None, title=None, scale=alt.Scale(reverse=True)),
+                color=alt.Color('count:Q',
+                                scale=alt.Scale(
+                                    domain=[0, 1, 2, 3],
+                                    range=['#2D2D2D', '#9AE6B4', '#48BB78', '#276749']
+                                ),
+                                legend=None),
+                tooltip=[
+                    alt.Tooltip('date:T', title='Date', format='%b %d, %Y'),
+                    alt.Tooltip('count:Q', title='Lessons')
+                ]
+            ).properties(
+                height=120,
+                title=""
+            ).configure_view(strokeWidth=0)
+
+            st.altair_chart(heatmap, width='stretch')
+
+            # Color legend
+            st.markdown("""
+            <div style="display: flex; gap: 16px; justify-content: center; margin-top: 8px; font-size: 0.75rem; color: #888;">
+                <span><span style="display: inline-block; width: 12px; height: 12px; background: #2D2D2D; margin-right: 4px; vertical-align: middle;"></span>0</span>
+                <span><span style="display: inline-block; width: 12px; height: 12px; background: #9AE6B4; margin-right: 4px; vertical-align: middle;"></span>1</span>
+                <span><span style="display: inline-block; width: 12px; height: 12px; background: #48BB78; margin-right: 4px; vertical-align: middle;"></span>2</span>
+                <span><span style="display: inline-block; width: 12px; height: 12px; background: #276749; margin-right: 4px; vertical-align: middle;"></span>3+</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Date picker to view lessons for a specific day
+            st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
+            date_col1, date_col2 = st.columns([2, 3])
+            with date_col1:
+                selected_date = st.date_input(
+                    "View lessons for date",
+                    value=None,
+                    min_value=date_range[0].date(),
+                    max_value=date_range[-1].date(),
+                    label_visibility="collapsed"
+                )
+
+            if selected_date:
+                date_str = selected_date.strftime('%Y-%m-%d')
+                lessons_on_date = db.get_lessons_completed_on_date(date_str)
+                with date_col2:
+                    if lessons_on_date:
+                        st.markdown(f"**{len(lessons_on_date)} lesson(s) on {selected_date.strftime('%b %d, %Y')}:**")
+                        for lesson in lessons_on_date[:5]:
+                            st.markdown(f"- {lesson['title']} ({lesson['author']})")
+                    else:
+                        st.caption(f"No lessons completed on {selected_date.strftime('%b %d, %Y')}")
+        else:
+            st.info(f"No completion data for {selected_year}.")
     else:
         st.info("Complete your first lesson to generate the consistency map.")
 
@@ -163,7 +271,57 @@ def render_analytics(db) -> None:
         else:
             st.caption("Not enough data.")
 
-    # --- Section 5: Recent History ---
+    # --- Section 5: Personal Records ---
+    st.markdown('<div class="section-label">Personal Records</div>', unsafe_allow_html=True)
+
+    # Compute records (this also updates the database cache)
+    records = db.compute_and_update_records()
+
+    r1, r2, r3, r4, r5 = st.columns(5)
+
+    with r1:
+        render_personal_record_card(
+            "Best Streak",
+            f"{records.get('best_streak', {}).get('value', 0)} days",
+            None
+        )
+
+    with r2:
+        day_rec = records.get('most_day', {})
+        render_personal_record_card(
+            "Most in a Day",
+            day_rec.get('value', 0),
+            day_rec.get('date', '')
+        )
+
+    with r3:
+        week_rec = records.get('most_week', {})
+        render_personal_record_card(
+            "Most in a Week",
+            week_rec.get('value', 0),
+            f"Week {week_rec.get('week', '')}" if week_rec.get('week') else None
+        )
+
+    with r4:
+        month_rec = records.get('most_month', {})
+        render_personal_record_card(
+            "Most in a Month",
+            month_rec.get('value', 0),
+            month_rec.get('month', '')
+        )
+
+    with r5:
+        consistent = records.get('most_consistent', {})
+        avg_val = consistent.get('avg_per_day', 0)
+        render_personal_record_card(
+            "Most Consistent",
+            f"{avg_val}/day avg" if avg_val else "N/A",
+            f"Week {consistent.get('week', '')}" if consistent.get('week') else None
+        )
+
+    st.markdown("---")
+
+    # --- Section 6: Recent History ---
     st.markdown('<div class="section-label">Recently Completed</div>', unsafe_allow_html=True)
     recent = db.get_recent_completions(limit=5)
     if recent:
@@ -178,3 +336,22 @@ def render_analytics(db) -> None:
             """, unsafe_allow_html=True)
     else:
         st.caption("No recently completed lessons.")
+
+    st.markdown("---")
+
+    # --- Section 7: Export Statistics ---
+    st.markdown('<div class="section-label">Export</div>', unsafe_allow_html=True)
+
+    col_exp1, col_exp2 = st.columns([1, 3])
+    with col_exp1:
+        json_data = db.export_statistics_json()
+        st.download_button(
+            label="Export Statistics (JSON)",
+            data=json_data,
+            file_name=f"guitar_shed_stats_{datetime.now().strftime('%Y%m%d')}.json",
+            mime="application/json",
+            key="download_json",
+            width='stretch'
+        )
+    with col_exp2:
+        st.caption("Export your practice statistics for backup or analysis with LLMs.")

@@ -78,26 +78,26 @@ def render_practice_room(db) -> None:
         cols = st.columns([1, 1, 3])
         with cols[0]:
             st.button("Start Practice", type="primary", on_click=update_status_callback,
-                      args=(db, lesson['id'], 'In Progress'), use_container_width=True)
+                      args=(db, lesson['id'], 'In Progress'), width='stretch')
         with cols[1]:
-            st.link_button("YouTube", youtube_url, use_container_width=True)
+            st.link_button("YouTube", youtube_url, width='stretch')
     elif current_status == 'In Progress':
         cols = st.columns([1, 1, 1, 2])
         with cols[0]:
             st.button("Mark Completed", type="primary", on_click=update_status_callback,
-                      args=(db, lesson['id'], 'Completed'), use_container_width=True)
+                      args=(db, lesson['id'], 'Completed'), width='stretch')
         with cols[1]:
             st.button("Reset to New", on_click=update_status_callback,
-                      args=(db, lesson['id'], 'New'), use_container_width=True)
+                      args=(db, lesson['id'], 'New'), width='stretch')
         with cols[2]:
-            st.link_button("YouTube", youtube_url, use_container_width=True)
+            st.link_button("YouTube", youtube_url, width='stretch')
     else:  # Completed
         cols = st.columns([1, 1, 1, 2])
         with cols[0]:
             st.button("Practice Again", type="primary", on_click=update_status_callback,
-                      args=(db, lesson['id'], 'In Progress'), use_container_width=True)
+                      args=(db, lesson['id'], 'In Progress'), width='stretch')
         with cols[1]:
             st.button("Reset to New", on_click=update_status_callback,
-                      args=(db, lesson['id'], 'New'), use_container_width=True)
+                      args=(db, lesson['id'], 'New'), width='stretch')
         with cols[2]:
-            st.link_button("YouTube", youtube_url, use_container_width=True)
+            st.link_button("YouTube", youtube_url, width='stretch')

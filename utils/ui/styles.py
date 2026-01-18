@@ -129,5 +129,82 @@ def apply_conservative_style():
                 max-height: none !important;
                 overflow: visible !important;
             }
+
+            /* Progress ring and streak display */
+            .streak-container {
+                background: #2D2D2D;
+                border: 1px solid #3D3D3D;
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 16px;
+            }
+
+            .milestone-badge {
+                background: #3D4A3D;
+                border-radius: 4px;
+                padding: 8px 12px;
+                color: #48BB78;
+                font-size: 0.85rem;
+                margin-top: 12px;
+            }
+
+            .recovery-badge {
+                background: #4A3D3D;
+                border-radius: 4px;
+                padding: 8px 12px;
+                color: #F6AD55;
+                font-size: 0.85rem;
+                margin-top: 12px;
+            }
+
+            /* Personal records cards */
+            .record-card {
+                background: #2D2D2D;
+                border: 1px solid #3D3D3D;
+                border-radius: 6px;
+                padding: 16px;
+                text-align: center;
+            }
+
+            .record-value {
+                font-size: 1.5rem;
+                font-weight: 700;
+                color: #fff;
+            }
+
+            .record-label {
+                font-size: 0.8rem;
+                color: #888;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                margin-top: 4px;
+            }
+
+            /* Trend indicators */
+            .trend-up {
+                color: #48BB78;
+            }
+
+            .trend-down {
+                color: #F56565;
+            }
+
+            /* Heatmap color legend */
+            .heatmap-legend {
+                display: flex;
+                gap: 16px;
+                justify-content: center;
+                margin-top: 8px;
+                font-size: 0.75rem;
+                color: #888;
+            }
+
+            .heatmap-legend-item {
+                display: inline-block;
+                width: 12px;
+                height: 12px;
+                margin-right: 4px;
+                vertical-align: middle;
+            }
         </style>
     """, unsafe_allow_html=True)

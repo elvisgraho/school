@@ -14,9 +14,9 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 GRID_PAGE_SIZE = 100
 
 
-def _get_filter_hash(status: str, year: str, month: str, search: str) -> str:
+def _get_filter_hash(status: str, year: str, month: str, search: str, hide_completed: bool = False) -> str:
     """Generate a hash for the current filter state."""
-    return f"{status}|{year}|{month}|{search}"
+    return f"{status}|{year}|{month}|{search}|{hide_completed}"
 
 
 def render_library(db) -> None:
@@ -28,7 +28,7 @@ def render_library(db) -> None:
         st.session_state.lib_filter_hash = ""
 
     # 1. Filter Controls
-    c1, c2, c3 = st.columns([1, 1, 1])
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
     with c1:
         status_filter = st.selectbox(
             "Status", ['All', 'New', 'In Progress', 'Completed'], key='lib_status'
@@ -42,6 +42,8 @@ def render_library(db) -> None:
         month_options = ['All', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
         selected_month = st.selectbox("Month", month_options, key='lib_month')
+    with c4:
+        hide_completed = st.checkbox("Hide Completed", key='lib_hide_completed')
 
     search = st.text_input(
         "Search", placeholder="Search by title or author...", key='lib_search'
@@ -49,12 +51,22 @@ def render_library(db) -> None:
     st.markdown("<hr style='margin: 0.5rem 0; opacity: 0.2;'>", unsafe_allow_html=True)
 
     # Build filter parameters
-    s_filter = [status_filter] if status_filter != 'All' else None
+    # If hide_completed is checked, exclude Completed from results
+    if hide_completed:
+        if status_filter == 'Completed':
+            st.warning("Cannot hide completed when filtering by Completed status.")
+            s_filter = ['Completed']
+        elif status_filter == 'All':
+            s_filter = ['New', 'In Progress']
+        else:
+            s_filter = [status_filter]
+    else:
+        s_filter = [status_filter] if status_filter != 'All' else None
     y_filter = int(selected_year) if selected_year != 'All' else None
     m_filter = month_options.index(selected_month) if selected_month != 'All' else None
 
     # Check if filters changed - reset grid state if so
-    current_hash = _get_filter_hash(status_filter, str(selected_year), selected_month, search)
+    current_hash = _get_filter_hash(status_filter, str(selected_year), selected_month, search, hide_completed)
     if current_hash != st.session_state.lib_filter_hash:
         st.session_state.lib_filter_hash = current_hash
         # Force new grid key to reset AgGrid state on filter change
@@ -176,5 +188,5 @@ def render_library(db) -> None:
 
             set_lesson(lesson_id)
             st.rerun()
-        except Exception:
+        except (KeyError, IndexError, TypeError, ValueError):
             pass
