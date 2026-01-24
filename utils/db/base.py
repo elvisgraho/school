@@ -140,3 +140,31 @@ class DatabaseBase:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS tags (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS lesson_tags (
+                    lesson_id INTEGER NOT NULL,
+                    tag_id INTEGER NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (lesson_id, tag_id),
+                    FOREIGN KEY (lesson_id) REFERENCES lessons(id) ON DELETE CASCADE,
+                    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+                )
+            ''')
+
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_lesson_tags_lesson
+                ON lesson_tags(lesson_id)
+            ''')
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_lesson_tags_tag
+                ON lesson_tags(tag_id)
+            ''')

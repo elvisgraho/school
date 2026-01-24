@@ -187,7 +187,8 @@ class LessonsMixin:
                               date_to: Optional[datetime] = None,
                               search_query: Optional[str] = None,
                               year_filter: Optional[int] = None,
-                              month_filter: Optional[int] = None) -> Tuple[List[Dict[str, Any]], int]:
+                              month_filter: Optional[int] = None,
+                              tag_ids: Optional[List[int]] = None) -> Tuple[List[Dict[str, Any]], int]:
         """Get lessons with server-side pagination."""
         if page_size is None:
             page_size = PAGE_SIZE
@@ -224,20 +225,51 @@ class LessonsMixin:
             conditions.append('strftime("%m", lesson_date) = ?')
             params.append(f'{month_filter:02d}')
 
+        # Tag filtering - lessons must have ALL specified tags
+        tag_join = ''
+        tag_having = ''
+        if tag_ids:
+            placeholders = ','.join('?' * len(tag_ids))
+            tag_join = 'JOIN lesson_tags lt ON lessons.id = lt.lesson_id'
+            conditions.append(f'lt.tag_id IN ({placeholders})')
+            params.extend(tag_ids)
+            tag_having = f'HAVING COUNT(DISTINCT lt.tag_id) = {len(tag_ids)}'
+
         where_clause = ' AND '.join(conditions)
 
         with self._get_connection() as conn:
-            total = conn.execute(f'SELECT COUNT(*) FROM lessons WHERE {where_clause}', params).fetchone()[0]
+            if tag_ids:
+                count_query = f'''
+                    SELECT COUNT(*) FROM (
+                        SELECT lessons.id FROM lessons {tag_join}
+                        WHERE {where_clause}
+                        GROUP BY lessons.id {tag_having}
+                    )
+                '''
+                total = conn.execute(count_query, params).fetchone()[0]
+            else:
+                total = conn.execute(f'SELECT COUNT(*) FROM lessons WHERE {where_clause}', params).fetchone()[0]
 
             offset = (page - 1) * page_size
-            query = f'''
-                SELECT id, file_hash, filename, filepath, author, title, lesson_date,
-                       status, completed_at, created_at
-                FROM lessons
-                WHERE {where_clause}
-                ORDER BY lesson_date DESC
-                LIMIT {page_size} OFFSET {offset}
-            '''
+            if tag_ids:
+                query = f'''
+                    SELECT lessons.id, file_hash, filename, filepath, author, title, lesson_date,
+                           status, completed_at, lessons.created_at
+                    FROM lessons {tag_join}
+                    WHERE {where_clause}
+                    GROUP BY lessons.id {tag_having}
+                    ORDER BY lesson_date DESC
+                    LIMIT {page_size} OFFSET {offset}
+                '''
+            else:
+                query = f'''
+                    SELECT id, file_hash, filename, filepath, author, title, lesson_date,
+                           status, completed_at, created_at
+                    FROM lessons
+                    WHERE {where_clause}
+                    ORDER BY lesson_date DESC
+                    LIMIT {page_size} OFFSET {offset}
+                '''
             rows = conn.execute(query, params).fetchall()
             lessons = [dict(row) for row in rows]
 
@@ -246,7 +278,8 @@ class LessonsMixin:
     def search_transcripts(self, query: str, page_size: int = 500,
                            status_filter: Optional[List[str]] = None,
                            year_filter: Optional[int] = None,
-                           month_filter: Optional[int] = None) -> Tuple[List[Dict[str, Any]], int]:
+                           month_filter: Optional[int] = None,
+                           tag_ids: Optional[List[int]] = None) -> Tuple[List[Dict[str, Any]], int]:
         """Search transcripts efficiently and return matching lessons with context snippets.
 
         Optimized for 15k+ videos with 8-min average transcripts.
@@ -274,26 +307,56 @@ class LessonsMixin:
             conditions.append('strftime("%m", lesson_date) = ?')
             params.append(f'{month_filter:02d}')
 
+        # Tag filtering
+        tag_join = ''
+        tag_having = ''
+        if tag_ids:
+            placeholders = ','.join('?' * len(tag_ids))
+            tag_join = 'JOIN lesson_tags lt ON lessons.id = lt.lesson_id'
+            conditions.append(f'lt.tag_id IN ({placeholders})')
+            params.extend(tag_ids)
+            tag_having = f'HAVING COUNT(DISTINCT lt.tag_id) = {len(tag_ids)}'
+
         where_clause = ' AND '.join(conditions)
 
         with self._get_connection() as conn:
             # Use LIKE for case-insensitive search (SQLite LIKE is case-insensitive for ASCII)
             # First get count
-            count_query = f'''
-                SELECT COUNT(*) FROM lessons
-                WHERE {where_clause} AND LOWER(transcript) LIKE ?
-            '''
+            if tag_ids:
+                count_query = f'''
+                    SELECT COUNT(*) FROM (
+                        SELECT lessons.id FROM lessons {tag_join}
+                        WHERE {where_clause} AND LOWER(transcript) LIKE ?
+                        GROUP BY lessons.id {tag_having}
+                    )
+                '''
+            else:
+                count_query = f'''
+                    SELECT COUNT(*) FROM lessons
+                    WHERE {where_clause} AND LOWER(transcript) LIKE ?
+                '''
             total = conn.execute(count_query, params + [f'%{query_lower}%']).fetchone()[0]
 
             # Fetch matching lessons with transcript for context extraction
-            data_query = f'''
-                SELECT id, file_hash, filename, filepath, author, title, lesson_date,
-                       status, completed_at, created_at, transcript
-                FROM lessons
-                WHERE {where_clause} AND LOWER(transcript) LIKE ?
-                ORDER BY lesson_date DESC
-                LIMIT {page_size}
-            '''
+            if tag_ids:
+                data_query = f'''
+                    SELECT lessons.id, file_hash, filename, filepath, author, title, lesson_date,
+                           status, completed_at, lessons.created_at, transcript
+                    FROM lessons {tag_join}
+                    WHERE {where_clause} AND LOWER(transcript) LIKE ?
+                    GROUP BY lessons.id {tag_having}
+                    ORDER BY lesson_date DESC
+                    LIMIT {page_size}
+                '''
+            else:
+                data_query = f'''
+                    SELECT id, file_hash, filename, filepath, author, title, lesson_date,
+                           status, completed_at, created_at, transcript
+                    FROM lessons
+                    WHERE {where_clause} AND LOWER(transcript) LIKE ?
+                    ORDER BY lesson_date DESC
+                    LIMIT {page_size}
+                '''
             rows = conn.execute(data_query, params + [f'%{query_lower}%']).fetchall()
 
             lessons = []

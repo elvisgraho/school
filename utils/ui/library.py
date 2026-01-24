@@ -7,25 +7,16 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from .styles import apply_conservative_style
-from .callbacks import set_lesson
+from .callbacks import set_lesson, bulk_add_tag_callback, bulk_untag_and_delete_callback
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 
 # Page size for AgGrid - balance between performance and usability
 GRID_PAGE_SIZE = 100
 
 
-def _get_filter_hash(status: str, year: str, month: str, search: str, hide_completed: bool = False, transcript_search: str = "") -> str:
-    """Generate a hash for the current filter state."""
-    return f"{status}|{year}|{month}|{search}|{hide_completed}|{transcript_search}"
-
-
 def render_library(db) -> None:
     """Render the Full Library List optimized for large datasets."""
     apply_conservative_style()
-
-    # Initialize filter state in session
-    if 'lib_filter_hash' not in st.session_state:
-        st.session_state.lib_filter_hash = ""
 
     # 1. Filter Controls
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
@@ -44,6 +35,23 @@ def render_library(db) -> None:
         selected_month = st.selectbox("Month", month_options, key='lib_month')
     with c4:
         hide_completed = st.checkbox("Hide Completed", key='lib_hide_completed')
+
+    # Tag filter
+    all_tags = db.get_all_tags()
+    tag_options = {tag['name']: tag['id'] for tag in all_tags}
+    selected_tag_names = st.multiselect(
+        "Filter by Tags",
+        options=list(tag_options.keys()),
+        key='lib_tags',
+        placeholder="Select tags to filter..."
+    )
+    selected_tag_ids = [tag_options[name] for name in selected_tag_names] if selected_tag_names else None
+
+    # Clear untag success if tag filter changed
+    bulk_untag_success = st.session_state.get('bulk_untag_success')
+    if bulk_untag_success:
+        if not selected_tag_names or bulk_untag_success.get('tag') not in selected_tag_names:
+            st.session_state.bulk_untag_success = None
 
     search = st.text_input(
         "Search", placeholder="Search by title or author...", key='lib_search'
@@ -71,17 +79,6 @@ def render_library(db) -> None:
     y_filter = int(selected_year) if selected_year != 'All' else None
     m_filter = month_options.index(selected_month) if selected_month != 'All' else None
 
-    # Check if filters changed - reset grid state if so
-    current_hash = _get_filter_hash(status_filter, str(selected_year), selected_month, search, hide_completed, transcript_search)
-    if current_hash != st.session_state.lib_filter_hash:
-        st.session_state.lib_filter_hash = current_hash
-        # Force new grid key to reset AgGrid state on filter change
-        st.session_state.lib_grid_key = f"library_aggrid_{hash(current_hash)}"
-
-    # Ensure grid key exists
-    if 'lib_grid_key' not in st.session_state:
-        st.session_state.lib_grid_key = "library_aggrid_default"
-
     # Fetch data - use transcript search if active, otherwise regular search
     if is_transcript_search:
         lessons, total_count = db.search_transcripts(
@@ -89,7 +86,8 @@ def render_library(db) -> None:
             page_size=500,
             status_filter=s_filter,
             year_filter=y_filter,
-            month_filter=m_filter
+            month_filter=m_filter,
+            tag_ids=selected_tag_ids
         )
     else:
         lessons, total_count = db.get_paginated_lessons(
@@ -98,7 +96,8 @@ def render_library(db) -> None:
             status_filter=s_filter,
             search_query=search if search else None,
             year_filter=y_filter,
-            month_filter=m_filter
+            month_filter=m_filter,
+            tag_ids=selected_tag_ids
         )
 
     if not lessons:
@@ -120,6 +119,55 @@ def render_library(db) -> None:
         st.caption(f"Showing first 500 of {total_count:,} matching lessons. Use filters to narrow results.")
     else:
         st.caption(f"Found {len(df):,} lessons")
+
+    # Bulk tag button - show when there's a search term
+    tag_term = transcript_search.strip() if is_transcript_search else search.strip() if search else None
+    if tag_term and lessons:
+        # Clear success state if search term changed
+        bulk_success = st.session_state.get('bulk_tag_success')
+        if bulk_success and bulk_success.get('tag') != tag_term:
+            st.session_state.bulk_tag_success = None
+            bulk_success = None
+
+        lesson_ids = [l['id'] for l in lessons]
+        col_tag, col_spacer = st.columns([2, 3])
+        with col_tag:
+            if bulk_success:
+                st.button(
+                    f"✓ Tagged {bulk_success['count']} videos as \"{tag_term}\"",
+                    key='bulk_tag_btn',
+                    disabled=True
+                )
+            else:
+                st.button(
+                    f'Tag all {len(lessons)} results as "{tag_term}"',
+                    key='bulk_tag_btn',
+                    on_click=bulk_add_tag_callback,
+                    args=(db, lesson_ids, tag_term)
+                )
+
+    # Bulk untag button - show when filtering by exactly one tag
+    if selected_tag_names and len(selected_tag_names) == 1:
+        tag_name = selected_tag_names[0]
+        tag_id = tag_options.get(tag_name)
+        bulk_untag_success = st.session_state.get('bulk_untag_success')
+
+        col_untag, col_spacer2 = st.columns([2, 3])
+        with col_untag:
+            if bulk_untag_success and bulk_untag_success.get('tag') == tag_name:
+                st.button(
+                    f"✓ Deleted tag \"{tag_name}\"",
+                    key='bulk_untag_btn',
+                    disabled=True
+                )
+            else:
+                st.button(
+                    f'Delete tag "{tag_name}" from all {len(lessons)} videos',
+                    key='bulk_untag_btn',
+                    on_click=bulk_untag_and_delete_callback,
+                    args=(db, tag_id, tag_name),
+                    type='secondary'
+                )
 
     # Build AgGrid options
     gb = GridOptionsBuilder.from_dataframe(grid_data)
@@ -147,7 +195,6 @@ def render_library(db) -> None:
     # Pagination - smaller page size for better performance
     gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=GRID_PAGE_SIZE)
     gb.configure_grid_options(
-        domLayout='autoHeight',
         rowBuffer=20,  # Buffer for smooth scrolling
         suppressRowClickSelection=False,
         enableCellTextSelection=True,
@@ -185,14 +232,14 @@ def render_library(db) -> None:
         }
     }
 
-    # Render grid with static key
+    # Render grid with fixed height to avoid autoHeight layout issues
     response = AgGrid(
         grid_data,
         gridOptions=grid_options,
         update_mode=GridUpdateMode.MODEL_CHANGED,
         data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
         allow_unsafe_jscode=True,
-        height=None,
+        height=600,
         width='100%',
         fit_columns_on_grid_load=True,
         key="library_grid",

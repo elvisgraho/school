@@ -9,6 +9,7 @@ from .streaks import StreaksMixin
 from .records import RecordsMixin
 from .settings import SettingsMixin
 from .export import ExportMixin
+from .tags import TagsMixin
 
 
 class DatabaseManager(
@@ -18,7 +19,8 @@ class DatabaseManager(
     StreaksMixin,
     RecordsMixin,
     SettingsMixin,
-    ExportMixin
+    ExportMixin,
+    TagsMixin
 ):
     """
     SQLite database manager for guitar lesson progress tracking.
@@ -31,6 +33,7 @@ class DatabaseManager(
     - RecordsMixin: Personal records computation
     - SettingsMixin: User settings management
     - ExportMixin: Data export functionality
+    - TagsMixin: Tag management for lessons
     """
 
     def __init__(self, db_path: str = DB_FILE):

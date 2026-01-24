@@ -105,10 +105,16 @@ def render_discovery(db) -> None:
     # SECTION 1: IN PROGRESS (prioritized)
     in_progress_lessons = db.get_in_progress_lessons(limit=10)
     if in_progress_lessons:
+        # Get tags for all lessons efficiently
+        lesson_ids = [l['id'] for l in in_progress_lessons]
+        lesson_tags_map = db.get_tags_for_lessons(lesson_ids)
+
         st.markdown('<div class="section-label">Continue Watching</div>', unsafe_allow_html=True)
         for lesson in in_progress_lessons:
             lesson_id = lesson['id']
-            label = f"{lesson['title']}\n{lesson['author']}"
+            tags = lesson_tags_map.get(lesson_id, [])
+            tags_str = ' · '.join([t['name'] for t in tags]) if tags else ''
+            label = f"{lesson['title']}\n{lesson['author']}" + (f"\n{tags_str}" if tags_str else '')
             st.button(label, key=f"inp_{lesson_id}", width='stretch',
                      on_click=set_lesson, args=(lesson_id,))
         st.write("")
@@ -119,10 +125,15 @@ def render_discovery(db) -> None:
     priority_lessons = db.get_priority_suggestions(limit=5)
 
     if priority_lessons:
+        priority_ids = [l['id'] for l in priority_lessons]
+        priority_tags_map = db.get_tags_for_lessons(priority_ids)
+
         for lesson in priority_lessons:
             lesson_id = lesson['id']
-            status_badge = "[In Progress] " if lesson['status'] == 'In Progress' else ""
-            label = f"{status_badge}{lesson['title']}\n{lesson['author']}"
+            status_badge = "▶ " if lesson['status'] == 'In Progress' else ""
+            tags = priority_tags_map.get(lesson_id, [])
+            tags_str = ' · '.join([t['name'] for t in tags]) if tags else ''
+            label = f"{status_badge}{lesson['title']}\n{lesson['author']}" + (f"\n{tags_str}" if tags_str else '')
             st.button(label, key=f"sug_{lesson_id}", width='stretch',
                      on_click=set_lesson, args=(lesson_id,))
     else:
@@ -136,6 +147,12 @@ def render_discovery(db) -> None:
 
     if has_suggestions:
         st.markdown('<div class="section-label">Time to Review</div>', unsafe_allow_html=True)
+
+        # Collect all lesson IDs for batch tag fetch
+        all_review_ids = []
+        for lessons in spaced_suggestions.values():
+            all_review_ids.extend([l['id'] for l in lessons[:2]])
+        review_tags_map = db.get_tags_for_lessons(all_review_ids) if all_review_ids else {}
 
         interval_labels = {
             '1_week': '1 Week Ago',
@@ -160,7 +177,9 @@ def render_discovery(db) -> None:
                             date_str = ''
                     else:
                         date_str = ''
-                    label = f"{lesson['title']}\n{lesson['author']}" + (f" - Completed {date_str}" if date_str else "")
+                    tags = review_tags_map.get(lesson_id, [])
+                    tags_str = ' · '.join([t['name'] for t in tags]) if tags else ''
+                    label = f"{lesson['title']}\n{lesson['author']}" + (f" • {date_str}" if date_str else "") + (f"\n{tags_str}" if tags_str else "")
                     st.button(label, key=f"rev_{interval_key}_{lesson_id}", width='stretch',
                              on_click=set_lesson, args=(lesson_id,))
         st.write("")
@@ -171,9 +190,14 @@ def render_discovery(db) -> None:
     completed_lessons, _ = db.get_paginated_lessons(page=1, page_size=5, status_filter=['Completed'])
 
     if completed_lessons:
+        completed_ids = [l['id'] for l in completed_lessons]
+        completed_tags_map = db.get_tags_for_lessons(completed_ids)
+
         for lesson in completed_lessons:
             lesson_id = lesson['id']
-            label = f"{lesson['title']}\n{lesson['author']}"
+            tags = completed_tags_map.get(lesson_id, [])
+            tags_str = ' · '.join([t['name'] for t in tags]) if tags else ''
+            label = f"{lesson['title']}\n{lesson['author']}" + (f"\n{tags_str}" if tags_str else '')
             st.button(label, key=f"comp_{lesson_id}", width='stretch',
                      on_click=set_lesson, args=(lesson_id,))
     else:
