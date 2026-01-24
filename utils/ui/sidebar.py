@@ -1,5 +1,5 @@
 """
-Sidebar component for Guitar Shed.
+Sidebar component for Video School.
 Contains stats, library sync, goals settings, and metronome.
 """
 

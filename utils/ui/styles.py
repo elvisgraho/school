@@ -1,5 +1,5 @@
 """
-CSS styling modules for Guitar Shed.
+CSS styling modules for Video School.
 Conservative, precise, text-first aesthetic.
 """
 

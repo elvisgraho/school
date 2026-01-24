@@ -1,5 +1,5 @@
 """
-Database module for Guitar Shed.
+Database module for Video School.
 Manages SQLite database for lesson progress tracking.
 """
 

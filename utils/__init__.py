@@ -1,5 +1,5 @@
 """
-Guitar Shed utilities package.
+Video School utilities package.
 """
 
 from .parser import parse_filename, generate_unique_hash

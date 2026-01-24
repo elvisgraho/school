@@ -1,5 +1,5 @@
 """
-Discovery Tab for Guitar Shed.
+Discovery Tab for Video School.
 Enhanced with streak display, daily goals, and smart suggestions.
 """
 

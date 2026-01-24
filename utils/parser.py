@@ -1,5 +1,5 @@
 """
-Filename parsing utilities for Guitar Shed.
+Filename parsing utilities for Video School.
 Handles extraction of Author, Title, and Date from video filenames.
 """
 

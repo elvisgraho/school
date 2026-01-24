@@ -1,5 +1,5 @@
 """
-Practice Room (Video Player) for Guitar Shed.
+Practice Room (Video Player) for Video School.
 Optimized for smooth playback and responsive controls.
 """
 

@@ -8,7 +8,7 @@ from utils.ui import (
 
 # Page config must be first Streamlit command
 st.set_page_config(
-    page_title="Guitar Shed",
+    page_title="Video School",
     page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded"

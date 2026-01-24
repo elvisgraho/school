@@ -1,5 +1,5 @@
 """
-Database utilities for Guitar Shed.
+Database utilities for Video School.
 DEPRECATED: This file is kept for backwards compatibility.
 Please use utils.db.DatabaseManager instead.
 """

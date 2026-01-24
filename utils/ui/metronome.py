@@ -1,5 +1,5 @@
 """
-Metronome component for Guitar Shed.
+Metronome component for Video School.
 Embedded HTML/JS metronome with BPM slider, tap tempo, and volume control.
 """
 

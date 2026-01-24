@@ -1,6 +1,6 @@
 @echo off
 echo ============================================================
-echo      Guitar Shed - Create Portable Distribution
+echo      Video School - Create Portable Distribution
 echo ============================================================
 echo.
 echo This will create a self-contained portable folder that

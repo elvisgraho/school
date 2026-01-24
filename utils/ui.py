@@ -1,5 +1,5 @@
 """
-UI rendering modules for Guitar Shed.
+UI rendering modules for Video School.
 Redesigned for a conservative, precise, text-first aesthetic.
 
 This module re-exports all UI components for backward compatibility.

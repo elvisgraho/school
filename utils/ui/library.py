@@ -1,5 +1,5 @@
 """
-Library Tab for Guitar Shed.
+Library Tab for Video School.
 Optimized for 15k+ video libraries with efficient pagination.
 """
 

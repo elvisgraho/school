@@ -1,5 +1,5 @@
 """
-Shared UI Components for Guitar Shed.
+Shared UI Components for Video School.
 Reusable widgets for streak display, progress rings, and records.
 """
 

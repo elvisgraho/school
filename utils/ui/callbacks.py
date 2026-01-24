@@ -1,5 +1,5 @@
 """
-Helper callbacks for Guitar Shed UI.
+Helper callbacks for Video School UI.
 """
 
 import streamlit as st

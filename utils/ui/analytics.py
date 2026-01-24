@@ -1,5 +1,5 @@
 """
-Analytics Tab for Guitar Shed.
+Analytics Tab for Video School.
 Provides insights into practice consistency, volume, and library progress.
 Enhanced with interactive heatmap, personal records, and dashboard widgets.
 """

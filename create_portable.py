@@ -1,5 +1,5 @@
 """
-Create a portable distribution of Guitar Shed.
+Create a portable distribution of Video School.
 
 This creates a self-contained folder with:
 - Embedded Python
@@ -163,7 +163,7 @@ start "" cmd /c "timeout /t 3 >nul && start http://localhost:%PORT%"
 
 REM Run Streamlit
 echo ============================================================
-echo          Guitar Shed - Starting Application
+echo          Video School - Starting Application
 echo ============================================================
 echo.
 echo The application will open in your browser shortly...
@@ -191,9 +191,9 @@ WshShell.Run "GuitarShed.bat", 0, False
     create_shortcut = dist_folder / 'Create Desktop Shortcut.bat'
     create_shortcut.write_text('''@echo off
 set "SCRIPT_DIR=%~dp0"
-set "SHORTCUT=%USERPROFILE%\\Desktop\\Guitar Shed.lnk"
+set "SHORTCUT=%USERPROFILE%\\Desktop\\Video School.lnk"
 
-powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%SHORTCUT%'); $s.TargetPath = '%SCRIPT_DIR%GuitarShed.vbs'; $s.WorkingDirectory = '%SCRIPT_DIR%'; $s.Description = 'Guitar Shed - Lesson Progress Tracker'; $s.Save()"
+powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%SHORTCUT%'); $s.TargetPath = '%SCRIPT_DIR%GuitarShed.vbs'; $s.WorkingDirectory = '%SCRIPT_DIR%'; $s.Description = 'Video School - Lesson Progress Tracker'; $s.Save()"
 
 echo.
 echo Desktop shortcut created!
@@ -204,7 +204,7 @@ pause
 
     # Create README
     readme = dist_folder / 'README.txt'
-    readme.write_text('''# Guitar Shed - Portable Application
+    readme.write_text('''# Video School - Portable Application
 
 ## Quick Start
 
@@ -273,7 +273,7 @@ Copy this file to back up your data.
 def main():
     print("""
     ╔═══════════════════════════════════════════════════════════╗
-    ║     Guitar Shed - Portable Distribution Builder           ║
+    ║     Video School - Portable Distribution Builder           ║
     ╠═══════════════════════════════════════════════════════════╣
     ║  This will create a self-contained portable folder with:  ║
     ║  - Embedded Python runtime                                ║
