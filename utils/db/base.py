@@ -81,7 +81,8 @@ class DatabaseBase:
                     status TEXT DEFAULT 'New' CHECK(status IN ('New', 'In Progress', 'Completed', 'Archived')),
                     completed_at DATETIME,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    transcript TEXT
                 )
             ''')
 

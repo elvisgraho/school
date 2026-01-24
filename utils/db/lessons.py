@@ -3,11 +3,51 @@ Lesson management: CRUD operations, sync, and pagination.
 """
 
 import os
+import re
 import hashlib
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 
 PAGE_SIZE = 50
+
+
+def parse_srt_file(srt_path: str) -> Optional[str]:
+    """Parse SRT file and extract plain text efficiently.
+
+    Returns concatenated text from all subtitle entries, or None if file can't be read.
+    """
+    try:
+        # Try common encodings
+        for encoding in ('utf-8', 'utf-8-sig', 'latin-1', 'cp1252'):
+            try:
+                with open(srt_path, 'r', encoding=encoding) as f:
+                    content = f.read()
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            return None
+
+        # Remove SRT formatting: sequence numbers, timestamps, and empty lines
+        # SRT format: number \n timestamp --> timestamp \n text \n\n
+        lines = []
+        for line in content.split('\n'):
+            line = line.strip()
+            # Skip empty lines, sequence numbers (pure digits), and timestamp lines
+            if not line:
+                continue
+            if line.isdigit():
+                continue
+            if '-->' in line:
+                continue
+            # Remove HTML-style tags like <i>, </i>, <font>, etc.
+            line = re.sub(r'<[^>]+>', '', line)
+            if line:
+                lines.append(line)
+
+        return ' '.join(lines) if lines else None
+    except (OSError, IOError):
+        return None
 
 
 class LessonsMixin:
@@ -48,7 +88,13 @@ class LessonsMixin:
                             filepath = os.path.normpath(os.path.join(folder_path, entry.name))
                             file_hash = compute_file_hash(filepath)
                             if file_hash:
-                                file_data.append((file_hash, filepath, entry.name, mtime))
+                                # Check for matching .srt file
+                                base_name = os.path.splitext(entry.name)[0]
+                                srt_path = os.path.join(folder_path, base_name + '.srt')
+                                transcript = None
+                                if os.path.isfile(srt_path):
+                                    transcript = parse_srt_file(srt_path)
+                                file_data.append((file_hash, filepath, entry.name, mtime, transcript))
                             else:
                                 stats['errors'] += 1
                         except (OSError, IOError):
@@ -64,14 +110,14 @@ class LessonsMixin:
 
         with self._get_connection() as conn:
             existing_lookup = {}
-            rows = conn.execute('SELECT id, file_hash, filepath, filename, status, file_mtime FROM lessons').fetchall()
+            rows = conn.execute('SELECT id, file_hash, filepath, filename, status, file_mtime, transcript FROM lessons').fetchall()
             for row in rows:
                 existing_lookup[row['file_hash']] = dict(row)
 
             to_insert = []
             to_update = []
 
-            for file_hash, filepath, filename, mtime in file_data:
+            for file_hash, filepath, filename, mtime, transcript in file_data:
                 parsed = parse_func(filename)
                 if not parsed:
                     stats['errors'] += 1
@@ -81,13 +127,20 @@ class LessonsMixin:
 
                 if file_hash in existing_lookup:
                     existing = existing_lookup[file_hash]
-                    if existing['filepath'] != filepath or existing.get('file_mtime', 0) != mtime:
+                    # Update if path/mtime changed, or if we now have a transcript we didn't before
+                    needs_update = (
+                        existing['filepath'] != filepath or
+                        existing.get('file_mtime', 0) != mtime or
+                        (transcript and not existing.get('transcript'))
+                    )
+                    if needs_update:
                         to_update.append({
                             'id': existing['id'],
                             'filename': filename,
                             'filepath': filepath,
                             'mtime': mtime,
-                            'status': existing['status']
+                            'status': existing['status'],
+                            'transcript': transcript if transcript else existing.get('transcript')
                         })
                         stats['updated'] += 1
                     else:
@@ -100,22 +153,23 @@ class LessonsMixin:
                         'author': parsed['author'],
                         'title': parsed['title'],
                         'lesson_date': parsed['lesson_date'],
-                        'mtime': mtime
+                        'mtime': mtime,
+                        'transcript': transcript
                     })
                     stats['added'] += 1
 
             if to_insert:
                 conn.executemany('''
-                    INSERT INTO lessons (file_hash, filepath, filename, author, title, lesson_date, file_mtime, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'New')
-                ''', [(r['file_hash'], r['filepath'], r['filename'], r['author'], r['title'], r['lesson_date'], r['mtime'])
+                    INSERT INTO lessons (file_hash, filepath, filename, author, title, lesson_date, file_mtime, status, transcript)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'New', ?)
+                ''', [(r['file_hash'], r['filepath'], r['filename'], r['author'], r['title'], r['lesson_date'], r['mtime'], r['transcript'])
                       for r in to_insert])
 
             if to_update:
                 conn.executemany('''
-                    UPDATE lessons SET filename = ?, filepath = ?, file_mtime = ?, updated_at = CURRENT_TIMESTAMP
+                    UPDATE lessons SET filename = ?, filepath = ?, file_mtime = ?, transcript = COALESCE(?, transcript), updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
-                ''', [(r['filename'], r['filepath'], r['mtime'], r['id']) for r in to_update])
+                ''', [(r['filename'], r['filepath'], r['mtime'], r['transcript'], r['id']) for r in to_update])
 
             if current_hashes:
                 placeholders = ','.join('?' * len(current_hashes))
@@ -186,6 +240,101 @@ class LessonsMixin:
             '''
             rows = conn.execute(query, params).fetchall()
             lessons = [dict(row) for row in rows]
+
+        return lessons, total
+
+    def search_transcripts(self, query: str, page_size: int = 500,
+                           status_filter: Optional[List[str]] = None,
+                           year_filter: Optional[int] = None,
+                           month_filter: Optional[int] = None) -> Tuple[List[Dict[str, Any]], int]:
+        """Search transcripts efficiently and return matching lessons with context snippets.
+
+        Optimized for 15k+ videos with 8-min average transcripts.
+        Returns lessons with a 'context' field showing ~15 words around the match.
+        """
+        if not query or not query.strip():
+            return [], 0
+
+        query_lower = query.lower().strip()
+        context_words = 8  # words before and after match
+
+        conditions = ['status != "Archived"', 'transcript IS NOT NULL']
+        params = []
+
+        if status_filter:
+            placeholders = ','.join('?' * len(status_filter))
+            conditions.append(f'status IN ({placeholders})')
+            params.extend(status_filter)
+
+        if year_filter:
+            conditions.append('strftime("%Y", lesson_date) = ?')
+            params.append(str(year_filter))
+
+        if month_filter:
+            conditions.append('strftime("%m", lesson_date) = ?')
+            params.append(f'{month_filter:02d}')
+
+        where_clause = ' AND '.join(conditions)
+
+        with self._get_connection() as conn:
+            # Use LIKE for case-insensitive search (SQLite LIKE is case-insensitive for ASCII)
+            # First get count
+            count_query = f'''
+                SELECT COUNT(*) FROM lessons
+                WHERE {where_clause} AND LOWER(transcript) LIKE ?
+            '''
+            total = conn.execute(count_query, params + [f'%{query_lower}%']).fetchone()[0]
+
+            # Fetch matching lessons with transcript for context extraction
+            data_query = f'''
+                SELECT id, file_hash, filename, filepath, author, title, lesson_date,
+                       status, completed_at, created_at, transcript
+                FROM lessons
+                WHERE {where_clause} AND LOWER(transcript) LIKE ?
+                ORDER BY lesson_date DESC
+                LIMIT {page_size}
+            '''
+            rows = conn.execute(data_query, params + [f'%{query_lower}%']).fetchall()
+
+            lessons = []
+            for row in rows:
+                lesson = dict(row)
+                transcript = lesson.pop('transcript', '') or ''
+
+                # Extract context around match (efficient string search)
+                transcript_lower = transcript.lower()
+                match_pos = transcript_lower.find(query_lower)
+
+                if match_pos >= 0:
+                    # Find word boundaries around match
+                    words = transcript.split()
+                    char_count = 0
+                    match_word_idx = 0
+
+                    # Find which word contains the match
+                    for i, word in enumerate(words):
+                        if char_count + len(word) >= match_pos:
+                            match_word_idx = i
+                            break
+                        char_count += len(word) + 1  # +1 for space
+
+                    # Extract context window
+                    start_idx = max(0, match_word_idx - context_words)
+                    end_idx = min(len(words), match_word_idx + context_words + 1)
+                    context_words_list = words[start_idx:end_idx]
+
+                    # Build context string with ellipsis
+                    context = ' '.join(context_words_list)
+                    if start_idx > 0:
+                        context = '...' + context
+                    if end_idx < len(words):
+                        context = context + '...'
+
+                    lesson['context'] = context
+                else:
+                    lesson['context'] = ''
+
+                lessons.append(lesson)
 
         return lessons, total
 

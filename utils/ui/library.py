@@ -14,9 +14,9 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 GRID_PAGE_SIZE = 100
 
 
-def _get_filter_hash(status: str, year: str, month: str, search: str, hide_completed: bool = False) -> str:
+def _get_filter_hash(status: str, year: str, month: str, search: str, hide_completed: bool = False, transcript_search: str = "") -> str:
     """Generate a hash for the current filter state."""
-    return f"{status}|{year}|{month}|{search}|{hide_completed}"
+    return f"{status}|{year}|{month}|{search}|{hide_completed}|{transcript_search}"
 
 
 def render_library(db) -> None:
@@ -48,7 +48,13 @@ def render_library(db) -> None:
     search = st.text_input(
         "Search", placeholder="Search by title or author...", key='lib_search'
     )
+    transcript_search = st.text_input(
+        "Search Transcripts", placeholder="Search in video subtitles...", key='lib_transcript_search'
+    )
     st.markdown("<hr style='margin: 0.5rem 0; opacity: 0.2;'>", unsafe_allow_html=True)
+
+    # Determine if we're in transcript search mode
+    is_transcript_search = bool(transcript_search and transcript_search.strip())
 
     # Build filter parameters
     # If hide_completed is checked, exclude Completed from results
@@ -66,7 +72,7 @@ def render_library(db) -> None:
     m_filter = month_options.index(selected_month) if selected_month != 'All' else None
 
     # Check if filters changed - reset grid state if so
-    current_hash = _get_filter_hash(status_filter, str(selected_year), selected_month, search, hide_completed)
+    current_hash = _get_filter_hash(status_filter, str(selected_year), selected_month, search, hide_completed, transcript_search)
     if current_hash != st.session_state.lib_filter_hash:
         st.session_state.lib_filter_hash = current_hash
         # Force new grid key to reset AgGrid state on filter change
@@ -76,15 +82,24 @@ def render_library(db) -> None:
     if 'lib_grid_key' not in st.session_state:
         st.session_state.lib_grid_key = "library_aggrid_default"
 
-    # Fetch data - limit to reasonable size for ag-grid performance with 15k+ libraries
-    lessons, total_count = db.get_paginated_lessons(
-        page=1,
-        page_size=500,  # Limit initial load - ag-grid handles client-side pagination
-        status_filter=s_filter,
-        search_query=search if search else None,
-        year_filter=y_filter,
-        month_filter=m_filter
-    )
+    # Fetch data - use transcript search if active, otherwise regular search
+    if is_transcript_search:
+        lessons, total_count = db.search_transcripts(
+            query=transcript_search.strip(),
+            page_size=500,
+            status_filter=s_filter,
+            year_filter=y_filter,
+            month_filter=m_filter
+        )
+    else:
+        lessons, total_count = db.get_paginated_lessons(
+            page=1,
+            page_size=500,  # Limit initial load - ag-grid handles client-side pagination
+            status_filter=s_filter,
+            search_query=search if search else None,
+            year_filter=y_filter,
+            month_filter=m_filter
+        )
 
     if not lessons:
         st.info("No lessons found matching criteria.")
@@ -94,8 +109,11 @@ def render_library(db) -> None:
     df = pd.DataFrame(lessons)
     df['display_date'] = pd.to_datetime(df['lesson_date']).dt.strftime('%Y-%m-%d')
 
-    # Only use needed columns
-    grid_data = df[['id', 'display_date', 'author', 'title', 'status']].copy()
+    # Only use needed columns - add context column only for transcript search
+    if is_transcript_search and 'context' in df.columns:
+        grid_data = df[['id', 'display_date', 'author', 'title', 'status', 'context']].copy()
+    else:
+        grid_data = df[['id', 'display_date', 'author', 'title', 'status']].copy()
 
     # Show count with indicator if results are capped
     if len(df) >= 500:
@@ -118,8 +136,13 @@ def render_library(db) -> None:
     gb.configure_column("display_date", header_name="Date", valueFormatter=date_formatter,
                         width=110, minWidth=100, maxWidth=130)
     gb.configure_column("author", width=150, minWidth=120)
-    gb.configure_column("title", flex=2, minWidth=200)
+    gb.configure_column("title", flex=1 if is_transcript_search else 2, minWidth=200)
     gb.configure_column("status", width=110, minWidth=100, maxWidth=130)
+
+    # Add context column only for transcript search
+    if is_transcript_search:
+        gb.configure_column("context", header_name="Match Context", flex=1, minWidth=200,
+                            wrapText=True, autoHeight=True)
 
     # Pagination - smaller page size for better performance
     gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=GRID_PAGE_SIZE)
