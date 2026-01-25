@@ -406,7 +406,7 @@ class LessonsMixin:
         if status not in ('New', 'In Progress', 'Completed'):
             return False
 
-        completed_at = datetime.now() if status == 'Completed' else None
+        completed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S') if status == 'Completed' else None
 
         with self._get_connection() as conn:
             conn.execute('''

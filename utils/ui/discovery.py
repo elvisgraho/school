@@ -171,10 +171,14 @@ def render_discovery(db) -> None:
                     completed_date = lesson.get('completed_at', '')
                     if completed_date:
                         try:
-                            date_obj = datetime.strptime(completed_date, '%Y-%m-%d %H:%M:%S')
+                            date_obj = datetime.strptime(completed_date, '%Y-%m-%d %H:%M:%S.%f')
                             date_str = date_obj.strftime('%b %d, %Y')
                         except ValueError:
-                            date_str = ''
+                            try:
+                                date_obj = datetime.strptime(completed_date, '%Y-%m-%d %H:%M:%S')
+                                date_str = date_obj.strftime('%b %d, %Y')
+                            except ValueError:
+                                date_str = ''
                     else:
                         date_str = ''
                     tags = review_tags_map.get(lesson_id, [])

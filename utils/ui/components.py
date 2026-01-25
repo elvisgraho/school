@@ -53,7 +53,7 @@ def render_progress_ring(current: int, goal: int, label: str = "Today", size: in
         st.altair_chart(chart, width='content')
     with col2:
         text_color = '#888' if current == 0 else '#fff'
-        over_text = f'<div style="font-size: 0.75rem; color: #48BB78; margin-top: 4px;">{int(actual_pct)}% - Overachiever!</div>' if actual_pct > 100 else ''
+        over_text = f'<div style="font-size: 0.75rem; color: #48BB78; margin-top: 4px;">{int(actual_pct)}% - Overachiever!</div>' if actual_pct >= 200 else ''
         html = f'<div style="padding-top: 15px;"><div style="font-size: 1.8rem; font-weight: 700; color: {text_color};">{current}/{goal}</div><div style="font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px;">{label}</div>{over_text}</div>'
         st.markdown(html, unsafe_allow_html=True)
 
@@ -110,7 +110,7 @@ def render_streak_display(current: int, best: int, recovery_info: Optional[Dict[
     # Handle zero-state display
     if current == 0:
         best_text = f' | Best: {best} days' if best > 0 else ''
-        html = f'''<div style="background: #2D2D2D; border: 1px solid #3D3D3D; border-radius: 8px; padding: 20px; margin-bottom: 16px;">
+        html = f'''<div style="background: #2D2D2D; border: 1px solid #3D3D3D; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
 <div style="display: flex; align-items: center; gap: 16px;">
 <div style="font-size: 2.5rem; opacity: 0.4;">🔥</div>
 <div>
@@ -136,7 +136,7 @@ def render_streak_display(current: int, best: int, recovery_info: Optional[Dict[
     if is_at_best:
         extras += '<div style="margin-top: 12px; padding: 8px 12px; background: #3D4A3D; border-radius: 4px; color: #48BB78; font-size: 0.85rem;">You are at your best streak!</div>'
 
-    html = f'''<div style="background: #2D2D2D; border: 1px solid #3D3D3D; border-radius: 8px; padding: 20px; margin-bottom: 16px;">
+    html = f'''<div style="background: #2D2D2D; border: 1px solid #3D3D3D; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
 <div style="display: flex; align-items: center; gap: 16px;">
 <div style="font-size: {flame_size}rem;"><span style="filter: drop-shadow(0 0 8px rgba(246, 173, 85, 0.5));">🔥</span></div>
 <div>

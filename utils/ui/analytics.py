@@ -113,18 +113,15 @@ def render_analytics(db) -> None:
             df_full = pd.DataFrame({'date': date_range})
             df_heat = pd.merge(df_full, df_heat, on='date', how='left').fillna({'count': 0})
 
-            # Extract plotting helpers
-            df_heat['week'] = df_heat['date'].dt.isocalendar().week
-            df_heat['year'] = df_heat['date'].dt.year
-            df_heat['week_cont'] = df_heat.apply(
-                lambda x: x['week'] if x['year'] == date_range[-1].year else x['week'] - 52, axis=1)
-            df_heat['day_of_week'] = df_heat['date'].dt.day_name()
+            # Extract plotting helpers - use continuous week number from start of range
+            start_date = df_heat['date'].min()
+            df_heat['week_num'] = (df_heat['date'] - start_date).dt.days // 7
             df_heat['day_index'] = df_heat['date'].dt.weekday
             df_heat['date_str'] = df_heat['date'].dt.strftime('%Y-%m-%d')
 
             # 4-level color scale: 0 (gray), 1 (light green), 2 (medium green), 3+ (dark green)
             heatmap = alt.Chart(df_heat).mark_rect(stroke='#1a1a1a', strokeWidth=2).encode(
-                x=alt.X('week_cont:O', axis=None, title=None),
+                x=alt.X('week_num:O', axis=None, title=None),
                 y=alt.Y('day_index:O', axis=None, title=None, scale=alt.Scale(reverse=True)),
                 color=alt.Color('count:Q',
                                 scale=alt.Scale(
@@ -238,7 +235,7 @@ def render_analytics(db) -> None:
         df_s = pd.DataFrame([
             {'status': 'Unwatched', 'count': stats.get('new', 0)},
             {'status': 'In Progress', 'count': stats.get('in_progress', 0)},
-            {'status': 'Completed', 'count': stats['completed']}
+            {'status': 'Completed', 'count': stats.get('completed', 0)}
         ])
         
         # Horizontal bar chart (Reverted to Bar as requested)
@@ -312,10 +309,10 @@ def render_analytics(db) -> None:
 
     with r5:
         consistent = records.get('most_consistent', {})
-        avg_val = consistent.get('avg_per_day', 0)
+        avg_val = consistent.get('avg_per_day')
         render_personal_record_card(
             "Most Consistent",
-            f"{avg_val}/day avg" if avg_val else "N/A",
+            f"{avg_val}/day avg" if avg_val is not None else "N/A",
             f"Week {consistent.get('week', '')}" if consistent.get('week') else None
         )
 
@@ -327,7 +324,10 @@ def render_analytics(db) -> None:
     if recent:
         for r in recent:
             # Minimalistic row
-            date_str = datetime.strptime(r['completed_at'], '%Y-%m-%d %H:%M:%S').strftime('%b %d')
+            try:
+                date_str = datetime.strptime(r['completed_at'], '%Y-%m-%d %H:%M:%S.%f').strftime('%b %d')
+            except ValueError:
+                date_str = datetime.strptime(r['completed_at'], '%Y-%m-%d %H:%M:%S').strftime('%b %d')
             st.markdown(f"""
             <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding: 8px 0; font-size: 0.9rem;">
                 <span style="color: #E0E0E0; font-weight: 500;">{r['title']}</span>
