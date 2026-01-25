@@ -9,6 +9,7 @@ import pandas as pd
 import altair as alt
 from datetime import datetime, timedelta
 from .styles import apply_conservative_style
+from .callbacks import set_lesson
 from .components import (
     render_progress_ring_compact,
     render_mini_bar_chart,
@@ -89,10 +90,6 @@ def render_analytics(db) -> None:
         else:
             selected_year = current_year
 
-    # Initialize session state for selected date
-    if 'heatmap_selected_date' not in st.session_state:
-        st.session_state.heatmap_selected_date = None
-
     if activity_365 or selected_year != current_year:
         # Get activity data for selected year
         if selected_year == current_year:
@@ -119,13 +116,13 @@ def render_analytics(db) -> None:
             df_heat['day_index'] = df_heat['date'].dt.weekday
             df_heat['date_str'] = df_heat['date'].dt.strftime('%Y-%m-%d')
 
-            # 4-level color scale: 0 (gray), 1 (light green), 2 (medium green), 3+ (dark green)
+            # 4-level color scale: 0 (gray), 2 (light green), 4 (medium green), 6+ (dark green)
             heatmap = alt.Chart(df_heat).mark_rect(stroke='#1a1a1a', strokeWidth=2).encode(
                 x=alt.X('week_num:O', axis=None, title=None),
                 y=alt.Y('day_index:O', axis=None, title=None, scale=alt.Scale(reverse=True)),
                 color=alt.Color('count:Q',
                                 scale=alt.Scale(
-                                    domain=[0, 1, 2, 3],
+                                    domain=[0, 2, 4, 6],
                                     range=['#2D2D2D', '#9AE6B4', '#48BB78', '#276749']
                                 ),
                                 legend=None),
@@ -144,34 +141,11 @@ def render_analytics(db) -> None:
             st.markdown("""
             <div style="display: flex; gap: 16px; justify-content: center; margin-top: 8px; font-size: 0.75rem; color: #888;">
                 <span><span style="display: inline-block; width: 12px; height: 12px; background: #2D2D2D; margin-right: 4px; vertical-align: middle;"></span>0</span>
-                <span><span style="display: inline-block; width: 12px; height: 12px; background: #9AE6B4; margin-right: 4px; vertical-align: middle;"></span>1</span>
-                <span><span style="display: inline-block; width: 12px; height: 12px; background: #48BB78; margin-right: 4px; vertical-align: middle;"></span>2</span>
-                <span><span style="display: inline-block; width: 12px; height: 12px; background: #276749; margin-right: 4px; vertical-align: middle;"></span>3+</span>
+                <span><span style="display: inline-block; width: 12px; height: 12px; background: #9AE6B4; margin-right: 4px; vertical-align: middle;"></span>2</span>
+                <span><span style="display: inline-block; width: 12px; height: 12px; background: #48BB78; margin-right: 4px; vertical-align: middle;"></span>4</span>
+                <span><span style="display: inline-block; width: 12px; height: 12px; background: #276749; margin-right: 4px; vertical-align: middle;"></span>6+</span>
             </div>
             """, unsafe_allow_html=True)
-
-            # Date picker to view lessons for a specific day
-            st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
-            date_col1, date_col2 = st.columns([2, 3])
-            with date_col1:
-                selected_date = st.date_input(
-                    "View lessons for date",
-                    value=None,
-                    min_value=date_range[0].date(),
-                    max_value=date_range[-1].date(),
-                    label_visibility="collapsed"
-                )
-
-            if selected_date:
-                date_str = selected_date.strftime('%Y-%m-%d')
-                lessons_on_date = db.get_lessons_completed_on_date(date_str)
-                with date_col2:
-                    if lessons_on_date:
-                        st.markdown(f"**{len(lessons_on_date)} lesson(s) on {selected_date.strftime('%b %d, %Y')}:**")
-                        for lesson in lessons_on_date[:5]:
-                            st.markdown(f"- {lesson['title']} ({lesson['author']})")
-                    else:
-                        st.caption(f"No lessons completed on {selected_date.strftime('%b %d, %Y')}")
         else:
             st.info(f"No completion data for {selected_year}.")
     else:
@@ -318,12 +292,41 @@ def render_analytics(db) -> None:
 
     st.markdown("---")
 
-    # --- Section 6: Recent History ---
+    # --- Section 6: Browse by Date ---
+    st.markdown('<div class="section-label">Browse by Date</div>', unsafe_allow_html=True)
+
+    selected_date = st.date_input(
+        "Select a date",
+        value=None,
+        max_value=datetime.now().date(),
+        label_visibility="collapsed"
+    )
+
+    if selected_date:
+        date_str = selected_date.strftime('%Y-%m-%d')
+        lessons_on_date = db.get_lessons_completed_on_date(date_str)
+        if lessons_on_date:
+            st.caption(f"{len(lessons_on_date)} lesson(s) completed on {selected_date.strftime('%b %d, %Y')}")
+            for lesson in lessons_on_date:
+                st.button(
+                    f"{lesson['title']}\n{lesson['author']}",
+                    key=f"date_{lesson['id']}",
+                    on_click=set_lesson,
+                    args=(lesson['id'],),
+                    use_container_width=True
+                )
+        else:
+            st.caption(f"No lessons completed on {selected_date.strftime('%b %d, %Y')}")
+    else:
+        st.caption("Select a date to view completed lessons")
+
+    st.markdown("---")
+
+    # --- Section 7: Recent History ---
     st.markdown('<div class="section-label">Recently Completed</div>', unsafe_allow_html=True)
     recent = db.get_recent_completions(limit=5)
     if recent:
         for r in recent:
-            # Minimalistic row
             try:
                 date_str = datetime.strptime(r['completed_at'], '%Y-%m-%d %H:%M:%S.%f').strftime('%b %d')
             except ValueError:
@@ -339,7 +342,7 @@ def render_analytics(db) -> None:
 
     st.markdown("---")
 
-    # --- Section 7: Export Statistics ---
+    # --- Section 8: Export Statistics ---
     st.markdown('<div class="section-label">Export</div>', unsafe_allow_html=True)
 
     col_exp1, col_exp2 = st.columns([1, 3])

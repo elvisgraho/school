@@ -130,6 +130,27 @@ def apply_conservative_style():
                 overflow: visible !important;
             }
 
+            /* Fix Altair chart clipping in columns */
+            [data-testid="stColumn"],
+            [data-testid="stHorizontalBlock"],
+            [data-testid="stVerticalBlock"],
+            [data-testid="stElementContainer"],
+            [data-testid="stVegaLiteChart"],
+            .stColumn,
+            .stHorizontalBlock,
+            .stVerticalBlock {
+                overflow: visible !important;
+            }
+            [data-testid="stFullScreenFrame"] {
+                overflow: visible !important;
+                align-items: center;
+                display: flex;
+            }
+            
+            [data-testid="stFullScreenFrame"] svg {
+                overflow: visible !important;
+            }
+
             /* Progress ring and streak display */
             .streak-container {
                 background: #2D2D2D;

@@ -85,20 +85,17 @@ def render_discovery(db) -> None:
         recovery_info=streak_info
     )
 
-    # Daily and Weekly Goals in columns
-    col1, col2 = st.columns(2)
-    with col1:
-        render_progress_ring(
-            current=daily_progress['completed'],
-            goal=daily_progress['goal'],
-            label="Today"
-        )
-    with col2:
-        st.markdown("<div style='padding-top: 8px;'></div>", unsafe_allow_html=True)
-        render_weekly_progress_bar(
-            current=weekly_progress['completed'],
-            goal=weekly_progress['goal']
-        )
+    # Daily and Weekly Goals
+    render_progress_ring(
+        current=daily_progress['completed'],
+        goal=daily_progress['goal'],
+        label="Today"
+    )
+    st.markdown("<div style='margin-top: 16px;'></div>", unsafe_allow_html=True)
+    render_weekly_progress_bar(
+        current=weekly_progress['completed'],
+        goal=weekly_progress['goal']
+    )
 
     st.markdown("---")
 

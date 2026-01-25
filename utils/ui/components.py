@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Callable, Any
 MILESTONES = [7, 14, 30, 60, 90, 180, 365]
 
 
-def render_progress_ring(current: int, goal: int, label: str = "Today", size: int = 120) -> None:
+def render_progress_ring(current: int, goal: int, label: str = "Today", size: int = 100) -> None:
     """Render a circular progress indicator using Altair arc chart."""
     percentage = min((current / goal * 100) if goal > 0 else 0, 100)
     actual_pct = (current / goal * 100) if goal > 0 else 0
@@ -47,15 +47,19 @@ def render_progress_ring(current: int, goal: int, label: str = "Today", size: in
         height=size
     ).configure_view(strokeWidth=0)
 
-    # Display with center text
-    col1, col2 = st.columns([1, 2])
+    # Display ring with text to the right
+    text_color = '#888' if current == 0 else '#fff'
+    over_text = f'<div style="font-size: 0.75rem; color: #48BB78; margin-top: 4px;">{int(actual_pct)}% - Overachiever!</div>' if actual_pct >= 200 else ''
+
+    col1, col2 = st.columns([1, 2], gap="small")
     with col1:
         st.altair_chart(chart, width='content')
     with col2:
-        text_color = '#888' if current == 0 else '#fff'
-        over_text = f'<div style="font-size: 0.75rem; color: #48BB78; margin-top: 4px;">{int(actual_pct)}% - Overachiever!</div>' if actual_pct >= 200 else ''
-        html = f'<div style="padding-top: 15px;"><div style="font-size: 1.8rem; font-weight: 700; color: {text_color};">{current}/{goal}</div><div style="font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px;">{label}</div>{over_text}</div>'
-        st.markdown(html, unsafe_allow_html=True)
+        st.markdown(f'''<div>
+            <div style="font-size: 1.8rem; font-weight: 700; color: {text_color};">{current}/{goal}</div>
+            <div style="font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px;">{label}</div>
+            {over_text}
+        </div>''', unsafe_allow_html=True)
 
 
 def render_progress_ring_compact(current: int, goal: int, label: str = "Today") -> None:
