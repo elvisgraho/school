@@ -33,6 +33,10 @@ def _init_session_state():
         'selected_lesson_id': None,
         'db_synced': False,
         'metronome_bpm': 120,
+        # Playlist mode
+        'playlist_ids': [],
+        'playlist_index': 0,
+        'playlist_shuffle': False,
     }
     for key, default_value in defaults.items():
         if key not in st.session_state:

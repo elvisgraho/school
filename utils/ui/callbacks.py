@@ -3,6 +3,7 @@ Helper callbacks for Video School UI.
 """
 
 import streamlit as st
+import random
 
 
 def set_lesson(lesson_id):
@@ -63,3 +64,54 @@ def bulk_untag_and_delete_callback(db, tag_id, tag_name):
     }
     # Clear the tag filter since tag no longer exists
     st.session_state.lib_tags = []
+
+
+# Playlist callbacks
+
+def start_playlist(lesson_ids, shuffle=False):
+    """Callback: Initialize playlist mode with given lesson IDs."""
+    if not lesson_ids:
+        return
+    ids = list(lesson_ids)
+    if shuffle:
+        random.shuffle(ids)
+    st.session_state.playlist_ids = ids
+    st.session_state.playlist_index = 0
+    st.session_state.playlist_shuffle = shuffle
+    st.session_state.selected_lesson_id = ids[0]
+
+
+def playlist_next():
+    """Callback: Advance to next lesson in playlist."""
+    playlist_ids = st.session_state.get('playlist_ids', [])
+    if not playlist_ids:
+        return
+    current_index = st.session_state.get('playlist_index', 0)
+    if current_index < len(playlist_ids) - 1:
+        st.session_state.playlist_index = current_index + 1
+        st.session_state.selected_lesson_id = playlist_ids[current_index + 1]
+
+
+def playlist_prev():
+    """Callback: Go to previous lesson in playlist."""
+    playlist_ids = st.session_state.get('playlist_ids', [])
+    if not playlist_ids:
+        return
+    current_index = st.session_state.get('playlist_index', 0)
+    if current_index > 0:
+        st.session_state.playlist_index = current_index - 1
+        st.session_state.selected_lesson_id = playlist_ids[current_index - 1]
+
+
+def exit_playlist():
+    """Callback: Exit playlist mode and return to library."""
+    st.session_state.playlist_ids = []
+    st.session_state.playlist_index = 0
+    st.session_state.playlist_shuffle = False
+    st.session_state.selected_lesson_id = None
+
+
+def complete_and_next(db, lesson_id):
+    """Callback: Mark current lesson complete and advance to next in playlist."""
+    db.update_status(lesson_id, 'Completed')
+    playlist_next()

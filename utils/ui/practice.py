@@ -6,7 +6,10 @@ Optimized for smooth playback and responsive controls.
 import streamlit as st
 import os
 import urllib.parse
-from .callbacks import clear_lesson, update_status_callback, add_tag_callback, remove_tag_callback
+from .callbacks import (
+    clear_lesson, update_status_callback, add_tag_callback, remove_tag_callback,
+    exit_playlist, playlist_next, playlist_prev, complete_and_next
+)
 
 # Status display styling
 STATUS_COLORS = {
@@ -34,8 +37,25 @@ def render_practice_room(db) -> None:
         st.button("Return to Library", on_click=clear_lesson, type="primary")
         return
 
-    # Top bar: Back button aligned with title
-    st.button("← Back to Library", on_click=clear_lesson)
+    # Detect playlist mode
+    playlist_ids = st.session_state.get('playlist_ids', [])
+    playlist_index = st.session_state.get('playlist_index', 0)
+    is_playlist_mode = len(playlist_ids) > 0
+    playlist_total = len(playlist_ids)
+    playlist_position = playlist_index + 1  # 1-based for display
+
+    # Header with playlist progress
+    if is_playlist_mode:
+        progress_pct = playlist_position / playlist_total
+        st.markdown(
+            f'<div style="display: flex; justify-content: space-between; align-items: center;">'
+            f'<span style="color: #888;">Playlist</span>'
+            f'<span style="font-weight: 600;">{playlist_position} / {playlist_total}</span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        st.progress(progress_pct)
+
     st.markdown(f"### {lesson['title']}")
 
     # Video Player
@@ -64,6 +84,70 @@ def render_practice_room(db) -> None:
     # Combined metadata + buttons in one clean row
     metadata_html = f'<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;"><span style="color: #aaa;">By</span><span style="color: #fff; font-weight: 500;">{lesson["author"]}</span><span style="color: #555;">|</span><span style="color: #aaa;">{lesson["lesson_date"]}</span><span style="color: #555;">|</span><span style="background: {status_color}22; color: {status_color}; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem;">{current_status}</span>{tags_html}</div></div>'
     st.markdown(metadata_html, unsafe_allow_html=True)
+
+    # Action buttons
+    youtube_query = urllib.parse.quote_plus(lesson['title'])
+    youtube_url = f"https://www.youtube.com/results?search_query={youtube_query}"
+
+    if is_playlist_mode:
+        has_prev = playlist_index > 0
+        has_next = playlist_index < playlist_total - 1
+
+        # Single unified action row for playlist
+        c1, c2, c3, c4, c5 = st.columns([1, 1, 2, 1, 1])
+
+        with c1:
+            st.button("Exit", on_click=exit_playlist)
+        with c2:
+            st.button("Prev", on_click=playlist_prev, disabled=not has_prev)
+        with c3:
+            # Primary action based on status
+            if current_status == 'Completed':
+                if has_next:
+                    st.button("Next", type="primary", on_click=playlist_next)
+                else:
+                    st.button("Done", type="primary", on_click=exit_playlist)
+            else:
+                if has_next:
+                    st.button("Complete & Next", type="primary",
+                              on_click=complete_and_next, args=(db, lesson['id']))
+                else:
+                    st.button("Complete", type="primary",
+                              on_click=update_status_callback, args=(db, lesson['id'], 'Completed'))
+        with c4:
+            if has_next and current_status != 'Completed':
+                st.button("Skip", on_click=playlist_next)
+        with c5:
+            st.link_button("YouTube", youtube_url)
+
+        # Up Next preview
+        if has_next:
+            upcoming_ids = playlist_ids[playlist_index + 1:playlist_index + 3]
+            upcoming_titles = []
+            for uid in upcoming_ids:
+                ul = db.get_lesson_by_id(uid)
+                if ul:
+                    upcoming_titles.append(ul['title'])
+            if upcoming_titles:
+                st.caption(f"Next: {upcoming_titles[0]}" + (f" (+{playlist_total - playlist_position - 1} more)" if len(upcoming_titles) > 1 else ""))
+    else:
+        # Single video mode - clean 3-button layout
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            st.button("← Back", on_click=clear_lesson)
+        with c2:
+            if current_status == 'New':
+                st.button("Start", type="primary",
+                          on_click=update_status_callback, args=(db, lesson['id'], 'In Progress'))
+            elif current_status == 'In Progress':
+                st.button("Complete", type="primary",
+                          on_click=update_status_callback, args=(db, lesson['id'], 'Completed'))
+            else:
+                st.button("Practice Again", type="primary",
+                          on_click=update_status_callback, args=(db, lesson['id'], 'In Progress'))
+        with c3:
+            st.link_button("YouTube", youtube_url)
 
     # Tag management section
     with st.expander("Manage Tags", expanded=False):
@@ -107,35 +191,3 @@ def render_practice_room(db) -> None:
                 with tag_cols[i % 4]:
                     st.button(f"✕ {tag['name']}", key=f'remove_tag_{lesson_id}_{tag["id"]}',
                              on_click=remove_tag_callback, args=(db, lesson_id, tag['id']))
-
-    # Action buttons - compact row
-    youtube_query = urllib.parse.quote_plus(lesson['title'])
-    youtube_url = f"https://www.youtube.com/results?search_query={youtube_query}"
-
-    if current_status == 'New':
-        cols = st.columns([1, 1, 3])
-        with cols[0]:
-            st.button("Start Practice", type="primary", on_click=update_status_callback,
-                      args=(db, lesson['id'], 'In Progress'), width='stretch')
-        with cols[1]:
-            st.link_button("YouTube", youtube_url, width='stretch')
-    elif current_status == 'In Progress':
-        cols = st.columns([1, 1, 1, 2])
-        with cols[0]:
-            st.button("Mark Completed", type="primary", on_click=update_status_callback,
-                      args=(db, lesson['id'], 'Completed'), width='stretch')
-        with cols[1]:
-            st.button("Reset to New", on_click=update_status_callback,
-                      args=(db, lesson['id'], 'New'), width='stretch')
-        with cols[2]:
-            st.link_button("YouTube", youtube_url, width='stretch')
-    else:  # Completed
-        cols = st.columns([1, 1, 1, 2])
-        with cols[0]:
-            st.button("Practice Again", type="primary", on_click=update_status_callback,
-                      args=(db, lesson['id'], 'In Progress'), width='stretch')
-        with cols[1]:
-            st.button("Reset to New", on_click=update_status_callback,
-                      args=(db, lesson['id'], 'New'), width='stretch')
-        with cols[2]:
-            st.link_button("YouTube", youtube_url, width='stretch')

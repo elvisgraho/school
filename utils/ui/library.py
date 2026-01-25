@@ -7,7 +7,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from .styles import apply_conservative_style
-from .callbacks import set_lesson, bulk_add_tag_callback, bulk_untag_and_delete_callback
+from .callbacks import set_lesson, bulk_add_tag_callback, bulk_untag_and_delete_callback, start_playlist
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 
 # Page size for AgGrid - balance between performance and usability
@@ -18,12 +18,11 @@ def render_library(db) -> None:
     """Render the Full Library List optimized for large datasets."""
     apply_conservative_style()
 
-    # 1. Filter Controls
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+    # Filter Controls - Row 1: Status and Date
+    c1, c2, c3 = st.columns([1.5, 1, 1])
     with c1:
-        status_filter = st.selectbox(
-            "Status", ['All', 'New', 'In Progress', 'Completed'], key='lib_status'
-        )
+        status_options = ['All', 'New', 'In Progress', 'Completed', 'Hide Completed']
+        status_filter = st.selectbox("Status", status_options, key='lib_status')
     with c2:
         years = db.get_years_with_lessons()
         current_year = datetime.now().year
@@ -33,18 +32,26 @@ def render_library(db) -> None:
         month_options = ['All', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
         selected_month = st.selectbox("Month", month_options, key='lib_month')
-    with c4:
-        hide_completed = st.checkbox("Hide Completed", key='lib_hide_completed')
 
-    # Tag filter
-    all_tags = db.get_all_tags()
-    tag_options = {tag['name']: tag['id'] for tag in all_tags}
-    selected_tag_names = st.multiselect(
-        "Filter by Tags",
-        options=list(tag_options.keys()),
-        key='lib_tags',
-        placeholder="Select tags to filter..."
-    )
+    # Determine hide_completed from status selection
+    hide_completed = status_filter == 'Hide Completed'
+
+    # Filter Controls - Row 2: Tags and Search
+    tag_col, search_col = st.columns([1, 1])
+    with tag_col:
+        all_tags = db.get_all_tags()
+        tag_options = {tag['name']: tag['id'] for tag in all_tags}
+        selected_tag_names = st.multiselect(
+            "Tags",
+            options=list(tag_options.keys()),
+            key='lib_tags',
+            placeholder="Filter by tags..."
+        )
+    with search_col:
+        search = st.text_input(
+            "Search", placeholder="Title or author...", key='lib_search'
+        )
+
     selected_tag_ids = [tag_options[name] for name in selected_tag_names] if selected_tag_names else None
 
     # Clear untag success if tag filter changed
@@ -53,29 +60,21 @@ def render_library(db) -> None:
         if not selected_tag_names or bulk_untag_success.get('tag') not in selected_tag_names:
             st.session_state.bulk_untag_success = None
 
-    search = st.text_input(
-        "Search", placeholder="Search by title or author...", key='lib_search'
-    )
+    # Transcript search (separate row, less common)
     transcript_search = st.text_input(
-        "Search Transcripts", placeholder="Search in video subtitles...", key='lib_transcript_search'
+        "Transcript Search", placeholder="Search in video subtitles...", key='lib_transcript_search'
     )
-    st.markdown("<hr style='margin: 0.5rem 0; opacity: 0.2;'>", unsafe_allow_html=True)
 
     # Determine if we're in transcript search mode
     is_transcript_search = bool(transcript_search and transcript_search.strip())
 
     # Build filter parameters
-    # If hide_completed is checked, exclude Completed from results
     if hide_completed:
-        if status_filter == 'Completed':
-            st.warning("Cannot hide completed when filtering by Completed status.")
-            s_filter = ['Completed']
-        elif status_filter == 'All':
-            s_filter = ['New', 'In Progress']
-        else:
-            s_filter = [status_filter]
+        s_filter = ['New', 'In Progress']
+    elif status_filter == 'All':
+        s_filter = None
     else:
-        s_filter = [status_filter] if status_filter != 'All' else None
+        s_filter = [status_filter]
     y_filter = int(selected_year) if selected_year != 'All' else None
     m_filter = month_options.index(selected_month) if selected_month != 'All' else None
 
@@ -114,60 +113,78 @@ def render_library(db) -> None:
     else:
         grid_data = df[['id', 'display_date', 'author', 'title', 'status']].copy()
 
-    # Show count with indicator if results are capped
-    if len(df) >= 500:
-        st.caption(f"Showing first 500 of {total_count:,} matching lessons. Use filters to narrow results.")
-    else:
-        st.caption(f"Found {len(df):,} lessons")
+    st.markdown("<hr style='margin: 0.5rem 0; opacity: 0.2;'>", unsafe_allow_html=True)
 
-    # Bulk tag button - show when there's a search term
+    # Action bar - consolidated controls
+    lesson_ids = [l['id'] for l in lessons]
     tag_term = transcript_search.strip() if is_transcript_search else search.strip() if search else None
-    if tag_term and lessons:
-        # Clear success state if search term changed
-        bulk_success = st.session_state.get('bulk_tag_success')
-        if bulk_success and bulk_success.get('tag') != tag_term:
-            st.session_state.bulk_tag_success = None
-            bulk_success = None
 
-        lesson_ids = [l['id'] for l in lessons]
-        col_tag, col_spacer = st.columns([2, 3])
-        with col_tag:
-            if bulk_success:
-                st.button(
-                    f"✓ Tagged {bulk_success['count']} videos as \"{tag_term}\"",
-                    key='bulk_tag_btn',
-                    disabled=True
-                )
-            else:
-                st.button(
-                    f'Tag all {len(lessons)} results as "{tag_term}"',
-                    key='bulk_tag_btn',
-                    on_click=bulk_add_tag_callback,
-                    args=(db, lesson_ids, tag_term)
-                )
+    # Build action buttons dynamically
+    actions = []
 
-    # Bulk untag button - show when filtering by exactly one tag
+    # Playlist action (always show if multiple results)
+    if len(lessons) > 1:
+        actions.append('playlist')
+
+    # Bulk tag action (when searching)
+    if tag_term:
+        actions.append('bulk_tag')
+
+    # Bulk untag action (when filtering by single tag)
     if selected_tag_names and len(selected_tag_names) == 1:
-        tag_name = selected_tag_names[0]
-        tag_id = tag_options.get(tag_name)
-        bulk_untag_success = st.session_state.get('bulk_untag_success')
+        actions.append('bulk_untag')
 
-        col_untag, col_spacer2 = st.columns([2, 3])
-        with col_untag:
-            if bulk_untag_success and bulk_untag_success.get('tag') == tag_name:
-                st.button(
-                    f"✓ Deleted tag \"{tag_name}\"",
-                    key='bulk_untag_btn',
-                    disabled=True
-                )
-            else:
-                st.button(
-                    f'Delete tag "{tag_name}" from all {len(lessons)} videos',
-                    key='bulk_untag_btn',
-                    on_click=bulk_untag_and_delete_callback,
-                    args=(db, tag_id, tag_name),
-                    type='secondary'
-                )
+    if actions:
+        cols = st.columns(len(actions) + 1)  # +1 for count display
+
+        col_idx = 0
+
+        # Playlist button
+        if 'playlist' in actions:
+            with cols[col_idx]:
+                shuffle = st.session_state.get('playlist_shuffle_option', False)
+                btn_text = f"Shuffle ({len(lessons)})" if shuffle else f"Play All ({len(lessons)})"
+                st.button(btn_text, key='start_playlist_btn', type='primary',
+                          on_click=start_playlist, args=(lesson_ids, shuffle))
+            col_idx += 1
+
+        # Bulk tag button
+        if 'bulk_tag' in actions:
+            bulk_success = st.session_state.get('bulk_tag_success')
+            if bulk_success and bulk_success.get('tag') != tag_term:
+                st.session_state.bulk_tag_success = None
+                bulk_success = None
+            with cols[col_idx]:
+                if bulk_success:
+                    st.button(f"Tagged as \"{tag_term}\"", key='bulk_tag_btn', disabled=True)
+                else:
+                    st.button(f"Tag as \"{tag_term}\"", key='bulk_tag_btn',
+                              on_click=bulk_add_tag_callback, args=(db, lesson_ids, tag_term))
+            col_idx += 1
+
+        # Bulk untag button
+        if 'bulk_untag' in actions:
+            tag_name = selected_tag_names[0]
+            tag_id = tag_options.get(tag_name)
+            bulk_untag_success = st.session_state.get('bulk_untag_success')
+            with cols[col_idx]:
+                if bulk_untag_success and bulk_untag_success.get('tag') == tag_name:
+                    st.button(f"Deleted \"{tag_name}\"", key='bulk_untag_btn', disabled=True)
+                else:
+                    st.button(f"Delete tag", key='bulk_untag_btn',
+                              on_click=bulk_untag_and_delete_callback, args=(db, tag_id, tag_name))
+            col_idx += 1
+
+        # Count and shuffle toggle in last column
+        with cols[col_idx]:
+            count_text = f"{len(df):,}" if len(df) < 500 else f"500/{total_count:,}"
+            st.checkbox("Shuffle", key='playlist_shuffle_option', help=f"{count_text} lessons")
+    else:
+        # Just show count
+        if len(df) >= 500:
+            st.caption(f"Showing 500 of {total_count:,} lessons")
+        else:
+            st.caption(f"{len(df):,} lessons")
 
     # Build AgGrid options
     gb = GridOptionsBuilder.from_dataframe(grid_data)
