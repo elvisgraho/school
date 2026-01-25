@@ -348,7 +348,7 @@ def render_analytics(db) -> None:
         st.download_button(
             label="Export Statistics (JSON)",
             data=json_data,
-            file_name=f"guitar_shed_stats_{datetime.now().strftime('%Y%m%d')}.json",
+            file_name=f"video_shed_stats_{datetime.now().strftime('%Y%m%d')}.json",
             mime="application/json",
             key="download_json",
             width='stretch'

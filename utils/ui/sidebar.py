@@ -5,15 +5,21 @@ Contains stats, library sync, goals settings, and metronome.
 
 import streamlit as st
 import os
-import tkinter as tk
-from tkinter import filedialog
 from .metronome import render_metronome
+
+# Try to import tkinter (not available in embedded Python)
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+    HAS_TKINTER = True
+except ImportError:
+    HAS_TKINTER = False
 
 
 def render_sidebar(db, sync_db_func) -> None:
     """Render sidebar with settings and metronome."""
     with st.sidebar:
-        st.markdown("<h3 style='color:#ccc; margin-top:0;'>GUITAR SHED</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='color:#ccc; margin-top:0;'>Video School</h3>", unsafe_allow_html=True)
         st.markdown("<hr style='margin: 10px 0; opacity: 0.2'>", unsafe_allow_html=True)
 
         # Stats with streak and daily progress
@@ -60,26 +66,36 @@ def _render_library_sync(db, sync_db_func) -> None:
     """Render library location and sync controls."""
     st.markdown("**Library Location**")
 
-    col_text, col_btn = st.columns([4, 1])
-    with col_text:
-        path = st.text_input("Folder", value=st.session_state.folder_path,
-                           placeholder="Select folder...", label_visibility="collapsed", disabled=True)
-    with col_btn:
-        if st.button("...", help="Select Folder"):
-            root = tk.Tk()
-            root.withdraw()
-            root.wm_attributes('-topmost', 1)
-            selected_folder = filedialog.askdirectory(master=root)
-            root.destroy()
-            if selected_folder:
-                st.session_state.folder_path = selected_folder
-                st.rerun()
+    if HAS_TKINTER:
+        # Use tkinter file dialog when available
+        col_text, col_btn = st.columns([4, 1])
+        with col_text:
+            path = st.text_input("Folder", value=st.session_state.folder_path,
+                               placeholder="Select folder...", label_visibility="collapsed", disabled=True)
+        with col_btn:
+            if st.button("...", help="Select Folder"):
+                root = tk.Tk()
+                root.withdraw()
+                root.wm_attributes('-topmost', 1)
+                selected_folder = filedialog.askdirectory(master=root)
+                root.destroy()
+                if selected_folder:
+                    st.session_state.folder_path = selected_folder
+                    st.rerun()
+    else:
+        # Fallback: editable text input for portable version
+        path = st.text_input(
+            "Folder",
+            value=st.session_state.folder_path,
+            placeholder="Paste folder path here...",
+            label_visibility="collapsed",
+            help="Paste or type the full path to your video folder"
+        )
+        if path != st.session_state.folder_path:
+            st.session_state.folder_path = path
+            st.session_state.db_synced = False
 
-    if path != st.session_state.folder_path:
-        st.session_state.folder_path = path
-        st.session_state.db_synced = False
-
-    if st.button("Sync Library", type="secondary", width='stretch'):
+    if st.button("Sync Library", type="secondary", use_container_width=True):
         if st.session_state.folder_path and os.path.isdir(st.session_state.folder_path):
             with st.spinner("Scanning..."):
                 s = sync_db_func()

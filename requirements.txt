@@ -1,5 +1,19 @@
+# Video School - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Web framework
 streamlit>=1.28.0
+
+# Data handling
 pandas>=2.0.0
 altair>=5.0.0
+
+# Interactive grid
 streamlit-aggrid>=0.3.4
-pyinstaller>=6.0.0
+
+# Native window (for portable build)
+pywebview>=4.0.0
+
+# Performance
+pyarrow>=14.0.0
+watchdog>=3.0.0

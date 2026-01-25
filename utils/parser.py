@@ -23,7 +23,7 @@ FILENAME_NO_SEPARATOR_PATTERN = re.compile(
 
 def parse_filename(filename: str) -> Optional[Dict[str, Any]]:
     """
-    Parse a guitar lesson filename into its components.
+    Parse a video lesson filename into its components.
     
     Handles multiple formats:
     - "Author - Title DD-MM-YYYY.mp4" (standard)

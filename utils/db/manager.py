@@ -23,7 +23,7 @@ class DatabaseManager(
     TagsMixin
 ):
     """
-    SQLite database manager for guitar lesson progress tracking.
+    SQLite database manager for video lesson progress tracking.
 
     This class combines all database functionality through mixins:
     - DatabaseBase: Connection management, caching, and schema initialization
