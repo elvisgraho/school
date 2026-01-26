@@ -151,9 +151,13 @@ def render_library(db) -> None:
         # Bulk tag button
         if 'bulk_tag' in actions:
             bulk_success = st.session_state.get('bulk_tag_success')
-            if bulk_success and bulk_success.get('tag') != tag_term:
-                st.session_state.bulk_tag_success = None
-                bulk_success = None
+            # Reset if tag changed OR if new lessons appeared in the results
+            if bulk_success:
+                tagged_ids = bulk_success.get('lesson_ids', set())
+                current_ids = set(lesson_ids)
+                if bulk_success.get('tag') != tag_term or not current_ids.issubset(tagged_ids):
+                    st.session_state.bulk_tag_success = None
+                    bulk_success = None
             with cols[col_idx]:
                 if bulk_success:
                     st.button(f"Tagged as \"{tag_term}\"", key='bulk_tag_btn', disabled=True)

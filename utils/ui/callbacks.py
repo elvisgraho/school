@@ -47,7 +47,8 @@ def bulk_add_tag_callback(db, lesson_ids, tag_name):
         # Track successful bulk tag for UI feedback
         st.session_state.bulk_tag_success = {
             'tag': tag_name.strip(),
-            'count': len(lesson_ids)
+            'count': len(lesson_ids),
+            'lesson_ids': set(lesson_ids)
         }
 
 
