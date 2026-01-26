@@ -44,7 +44,7 @@ class StatsMixin:
             rows = conn.execute('''
                 SELECT DATE(completed_at) as date, COUNT(*) as count
                 FROM lessons
-                WHERE status = 'Completed' AND completed_at >= DATE('now', ?)
+                WHERE status = 'Completed' AND DATE(completed_at) >= DATE('now', 'localtime', ?)
                 GROUP BY DATE(completed_at)
             ''', (f'-{days} days',)).fetchall()
             return [dict(row) for row in rows]
@@ -55,7 +55,7 @@ class StatsMixin:
             rows = conn.execute('''
                 SELECT strftime('%Y-%m', completed_at) as month, COUNT(*) as count
                 FROM lessons
-                WHERE status = 'Completed' AND completed_at >= DATE('now', ?)
+                WHERE status = 'Completed' AND DATE(completed_at) >= DATE('now', 'localtime', ?)
                 GROUP BY strftime('%Y-%m', completed_at)
                 ORDER BY month DESC
             ''', (f'-{months} months',)).fetchall()
@@ -77,7 +77,7 @@ class StatsMixin:
         """Get the most recently completed lessons."""
         with self._get_connection() as conn:
             rows = conn.execute('''
-                SELECT title, author, completed_at
+                SELECT id, title, author, completed_at
                 FROM lessons
                 WHERE status = 'Completed'
                 ORDER BY completed_at DESC
@@ -164,7 +164,7 @@ class StatsMixin:
                 SELECT DATE(completed_at) as date, COUNT(*) as count
                 FROM lessons
                 WHERE status = 'Completed'
-                AND DATE(completed_at) >= DATE('now', '-6 days')
+                AND DATE(completed_at) >= DATE('now', 'localtime', '-6 days')
                 GROUP BY DATE(completed_at)
             ''').fetchall()
 

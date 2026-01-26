@@ -55,11 +55,7 @@ def render_progress_ring(current: int, goal: int, label: str = "Today", size: in
     with col1:
         st.altair_chart(chart, width='content')
     with col2:
-        st.markdown(f'''<div>
-            <div style="font-size: 1.8rem; font-weight: 700; color: {text_color};">{current}/{goal}</div>
-            <div style="font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px;">{label}</div>
-            {over_text}
-        </div>''', unsafe_allow_html=True)
+        st.markdown(f'<div><div style="font-size: 1.8rem; font-weight: 700; color: {text_color};">{current}/{goal}</div><div style="font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px;">{label}</div>{over_text}</div>', unsafe_allow_html=True)
 
 
 def render_progress_ring_compact(current: int, goal: int, label: str = "Today") -> None:

@@ -101,28 +101,63 @@ def render_analytics(db) -> None:
             df_heat = pd.DataFrame(activity_data)
             df_heat['date'] = pd.to_datetime(df_heat['date'])
 
-            # Create a full date range for the year
+            # Create a full date range for the year (GitHub style: full weeks)
             if selected_year == current_year:
-                date_range = pd.date_range(end=datetime.now(), periods=365)
+                # Use today's date explicitly to ensure we include today
+                end_date = pd.Timestamp(datetime.now().date())
+                # Go back ~52 weeks, starting from Monday
+                start_date = end_date - pd.Timedelta(days=364)
+                # Align to Monday (weekday 0 in pandas)
+                start_date = start_date - pd.Timedelta(days=start_date.weekday())
             else:
-                date_range = pd.date_range(start=f'{selected_year}-01-01', end=f'{selected_year}-12-31')
+                start_date = pd.Timestamp(f'{selected_year}-01-01')
+                # Align to Monday
+                start_date = start_date - pd.Timedelta(days=start_date.weekday())
+                end_date = pd.Timestamp(f'{selected_year}-12-31')
 
+            date_range = pd.date_range(start=start_date, end=end_date)
             df_full = pd.DataFrame({'date': date_range})
             df_heat = pd.merge(df_full, df_heat, on='date', how='left').fillna({'count': 0})
+            df_heat['count'] = df_heat['count'].astype(int)
 
-            # Extract plotting helpers - use continuous week number from start of range
-            start_date = df_heat['date'].min()
-            df_heat['week_num'] = (df_heat['date'] - start_date).dt.days // 7
-            df_heat['day_index'] = df_heat['date'].dt.weekday
-            df_heat['date_str'] = df_heat['date'].dt.strftime('%Y-%m-%d')
+            # GitHub-style: weeks as columns, days as rows
+            # Monday = 0 (top), Sunday = 6 (bottom)
+            df_heat['day_of_week'] = df_heat['date'].dt.weekday  # Mon=0, Sun=6
+            df_heat['week_num'] = ((df_heat['date'] - start_date).dt.days // 7)
+            df_heat['month'] = df_heat['date'].dt.strftime('%b')
+            df_heat['month_num'] = df_heat['date'].dt.month
 
-            # 4-level color scale: 0 (gray), 2 (light green), 4 (medium green), 6+ (dark green)
-            heatmap = alt.Chart(df_heat).mark_rect(stroke='#1a1a1a', strokeWidth=2).encode(
+            # Day labels for y-axis (Mon, Wed, Fri visible)
+            day_labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+            df_heat['day_name'] = df_heat['day_of_week'].apply(lambda x: day_labels[x])
+
+            # Get month positions for labels (first week of each month)
+            month_labels = df_heat.groupby('month_num').agg({
+                'week_num': 'first',
+                'month': 'first'
+            }).reset_index()
+
+            # Main heatmap
+            heatmap = alt.Chart(df_heat).mark_rect(
+                cornerRadius=2,
+                stroke='#1a1a1a',
+                strokeWidth=1
+            ).encode(
                 x=alt.X('week_num:O', axis=None, title=None),
-                y=alt.Y('day_index:O', axis=None, title=None, scale=alt.Scale(reverse=True)),
+                y=alt.Y('day_of_week:O',
+                        axis=alt.Axis(
+                            labels=True,
+                            labelExpr="datum.value == 0 ? 'Mon' : datum.value == 2 ? 'Wed' : datum.value == 4 ? 'Fri' : ''",
+                            ticks=False,
+                            domain=False,
+                            labelColor='#666',
+                            labelFontSize=10
+                        ),
+                        title=None),
                 color=alt.Color('count:Q',
                                 scale=alt.Scale(
-                                    domain=[0, 2, 4, 6],
+                                    type='threshold',
+                                    domain=[1, 3, 6],
                                     range=['#2D2D2D', '#9AE6B4', '#48BB78', '#276749']
                                 ),
                                 legend=None),
@@ -131,19 +166,37 @@ def render_analytics(db) -> None:
                     alt.Tooltip('count:Q', title='Lessons')
                 ]
             ).properties(
-                height=120,
-                title=""
-            ).configure_view(strokeWidth=0)
+                height=110
+            )
 
-            st.altair_chart(heatmap, width='stretch')
+            # Month labels on top
+            month_text = alt.Chart(month_labels).mark_text(
+                align='left',
+                baseline='bottom',
+                dy=-5,
+                fontSize=10,
+                color='#666'
+            ).encode(
+                x=alt.X('week_num:O', axis=None),
+                text='month:N'
+            )
 
-            # Color legend
+            combined_chart = alt.vconcat(
+                month_text.properties(height=20),
+                heatmap
+            ).configure_view(strokeWidth=0).configure_concat(spacing=0)
+
+            st.altair_chart(combined_chart, use_container_width=True)
+
+            # Color legend (GitHub style: Less - More)
             st.markdown("""
-            <div style="display: flex; gap: 16px; justify-content: center; margin-top: 8px; font-size: 0.75rem; color: #888;">
-                <span><span style="display: inline-block; width: 12px; height: 12px; background: #2D2D2D; margin-right: 4px; vertical-align: middle;"></span>0</span>
-                <span><span style="display: inline-block; width: 12px; height: 12px; background: #9AE6B4; margin-right: 4px; vertical-align: middle;"></span>2</span>
-                <span><span style="display: inline-block; width: 12px; height: 12px; background: #48BB78; margin-right: 4px; vertical-align: middle;"></span>4</span>
-                <span><span style="display: inline-block; width: 12px; height: 12px; background: #276749; margin-right: 4px; vertical-align: middle;"></span>6+</span>
+            <div style="display: flex; gap: 4px; justify-content: flex-end; align-items: center; margin-top: 4px; font-size: 0.7rem; color: #666;">
+                <span>Less</span>
+                <span style="display: inline-block; width: 10px; height: 10px; background: #2D2D2D; border-radius: 2px;"></span>
+                <span style="display: inline-block; width: 10px; height: 10px; background: #9AE6B4; border-radius: 2px;"></span>
+                <span style="display: inline-block; width: 10px; height: 10px; background: #48BB78; border-radius: 2px;"></span>
+                <span style="display: inline-block; width: 10px; height: 10px; background: #276749; border-radius: 2px;"></span>
+                <span>More</span>
             </div>
             """, unsafe_allow_html=True)
         else:
@@ -160,11 +213,33 @@ def render_analytics(db) -> None:
         # 3a. Cumulative Progress
         st.markdown('<div class="section-label">Accumulated Knowledge</div>', unsafe_allow_html=True)
         trend_data = db.get_backlog_trend()
-        
+
         if trend_data:
             df_trend = pd.DataFrame(trend_data)
             df_trend['date'] = pd.to_datetime(df_trend['date'])
-            
+
+            # Add a baseline point at 0 before first completion for proper area rendering
+            first_date = df_trend['date'].min()
+            baseline_date = first_date - pd.Timedelta(days=1)
+            baseline_row = pd.DataFrame([{
+                'date': baseline_date,
+                'completed_cumulative': 0,
+                'backlog': df_trend['backlog'].iloc[0] + df_trend['completed_cumulative'].iloc[0]
+            }])
+            df_trend = pd.concat([baseline_row, df_trend], ignore_index=True)
+
+            # Add today if not present (to extend the line to current date)
+            today = pd.Timestamp(datetime.now().date())
+            if df_trend['date'].max() < today:
+                last_cumulative = df_trend['completed_cumulative'].iloc[-1]
+                last_backlog = df_trend['backlog'].iloc[-1]
+                today_row = pd.DataFrame([{
+                    'date': today,
+                    'completed_cumulative': last_cumulative,
+                    'backlog': last_backlog
+                }])
+                df_trend = pd.concat([df_trend, today_row], ignore_index=True)
+
             # Area chart showing accumulation
             chart_trend = alt.Chart(df_trend).mark_area(
                 line={'color': '#4299E1'},
@@ -175,11 +250,11 @@ def render_analytics(db) -> None:
                     x1=1, x2=1, y1=1, y2=0
                 )
             ).encode(
-                x=alt.X('date:T', axis=alt.Axis(format='%b %Y', title=None, grid=False)),
+                x=alt.X('date:T', axis=alt.Axis(format='%b %d', title=None, grid=False)),
                 y=alt.Y('completed_cumulative:Q', title=None, axis=alt.Axis(grid=True)),
                 tooltip=['date:T', 'completed_cumulative:Q']
             ).properties(height=220)
-            
+
             st.altair_chart(chart_trend, width='stretch')
         else:
             st.caption("No history available.")
@@ -331,12 +406,13 @@ def render_analytics(db) -> None:
                 date_str = datetime.strptime(r['completed_at'], '%Y-%m-%d %H:%M:%S.%f').strftime('%b %d')
             except ValueError:
                 date_str = datetime.strptime(r['completed_at'], '%Y-%m-%d %H:%M:%S').strftime('%b %d')
-            st.markdown(f"""
-            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding: 8px 0; font-size: 0.9rem;">
-                <span style="color: #E0E0E0; font-weight: 500;">{r['title']}</span>
-                <span style="color: #888;">{date_str}</span>
-            </div>
-            """, unsafe_allow_html=True)
+            st.button(
+                f"{r['title']}\n{r['author']} • {date_str}",
+                key=f"recent_{r['id']}",
+                on_click=set_lesson,
+                args=(r['id'],),
+                use_container_width=True
+            )
     else:
         st.caption("No recently completed lessons.")
 
