@@ -6,7 +6,7 @@ Enhanced with streak display, daily goals, and smart suggestions.
 import streamlit as st
 from datetime import datetime
 from .styles import apply_conservative_style
-from .callbacks import set_lesson
+from .callbacks import set_lesson, start_playlist
 from .components import (
     render_streak_display,
     render_progress_ring,
@@ -107,13 +107,21 @@ def render_discovery(db) -> None:
         lesson_tags_map = db.get_tags_for_lessons(lesson_ids)
 
         st.markdown('<div class="section-label">Continue Watching</div>', unsafe_allow_html=True)
+
+        # If 2+ videos, clicking any starts a playlist; otherwise play standalone
+        use_playlist = len(in_progress_lessons) >= 2
+
         for lesson in in_progress_lessons:
             lesson_id = lesson['id']
             tags = lesson_tags_map.get(lesson_id, [])
             tags_str = ' · '.join([t['name'] for t in tags]) if tags else ''
             label = f"{lesson['title']}\n{lesson['author']}" + (f"\n{tags_str}" if tags_str else '')
-            st.button(label, key=f"inp_{lesson_id}", width='stretch',
-                     on_click=set_lesson, args=(lesson_id,))
+            if use_playlist:
+                st.button(label, key=f"inp_{lesson_id}", width='stretch',
+                         on_click=start_playlist, args=(lesson_ids, False, lesson_id))
+            else:
+                st.button(label, key=f"inp_{lesson_id}", width='stretch',
+                         on_click=set_lesson, args=(lesson_id,))
         st.write("")
 
     # SECTION 2: SMART SUGGESTIONS (prioritizes In Progress, then New)

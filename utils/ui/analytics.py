@@ -157,8 +157,8 @@ def render_analytics(db) -> None:
                 color=alt.Color('count:Q',
                                 scale=alt.Scale(
                                     type='threshold',
-                                    domain=[1, 3, 6],
-                                    range=['#2D2D2D', '#9AE6B4', '#48BB78', '#276749']
+                                    domain=[1, 3, 6, 10, 15],
+                                    range=['#2D2D2D', '#C6F6D5', '#9AE6B4', '#48BB78', '#276749', '#1C4532']
                                 ),
                                 legend=None),
                 tooltip=[
@@ -193,9 +193,11 @@ def render_analytics(db) -> None:
             <div style="display: flex; gap: 4px; justify-content: flex-end; align-items: center; margin-top: 4px; font-size: 0.7rem; color: #666;">
                 <span>Less</span>
                 <span style="display: inline-block; width: 10px; height: 10px; background: #2D2D2D; border-radius: 2px;"></span>
+                <span style="display: inline-block; width: 10px; height: 10px; background: #C6F6D5; border-radius: 2px;"></span>
                 <span style="display: inline-block; width: 10px; height: 10px; background: #9AE6B4; border-radius: 2px;"></span>
                 <span style="display: inline-block; width: 10px; height: 10px; background: #48BB78; border-radius: 2px;"></span>
                 <span style="display: inline-block; width: 10px; height: 10px; background: #276749; border-radius: 2px;"></span>
+                <span style="display: inline-block; width: 10px; height: 10px; background: #1C4532; border-radius: 2px;"></span>
                 <span>More</span>
             </div>
             """, unsafe_allow_html=True)

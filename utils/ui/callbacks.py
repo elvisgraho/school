@@ -14,6 +14,7 @@ def set_lesson(lesson_id):
 def clear_lesson():
     """Callback: Clear lesson ID state."""
     st.session_state.selected_lesson_id = None
+    st.session_state._force_rerun = True
 
 
 def update_status_callback(db, lesson_id, new_status):
@@ -69,17 +70,29 @@ def bulk_untag_and_delete_callback(db, tag_id, tag_name):
 
 # Playlist callbacks
 
-def start_playlist(lesson_ids, shuffle=False):
-    """Callback: Initialize playlist mode with given lesson IDs."""
+def start_playlist(lesson_ids, shuffle=False, start_from_id=None):
+    """Callback: Initialize playlist mode with given lesson IDs.
+
+    Args:
+        lesson_ids: List of lesson IDs for the playlist
+        shuffle: Whether to shuffle the playlist
+        start_from_id: Optional lesson ID to start from (reorders list so this is first)
+    """
     if not lesson_ids:
         return
     ids = list(lesson_ids)
     if shuffle:
         random.shuffle(ids)
+
+    # If start_from_id specified, reorder so that lesson is first
+    start_index = 0
+    if start_from_id and start_from_id in ids:
+        start_index = ids.index(start_from_id)
+
     st.session_state.playlist_ids = ids
-    st.session_state.playlist_index = 0
+    st.session_state.playlist_index = start_index
     st.session_state.playlist_shuffle = shuffle
-    st.session_state.selected_lesson_id = ids[0]
+    st.session_state.selected_lesson_id = ids[start_index]
 
 
 def playlist_next():
@@ -110,6 +123,7 @@ def exit_playlist():
     st.session_state.playlist_index = 0
     st.session_state.playlist_shuffle = False
     st.session_state.selected_lesson_id = None
+    st.session_state._force_rerun = True
 
 
 def complete_and_next(db, lesson_id):

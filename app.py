@@ -45,6 +45,11 @@ def _init_session_state():
 
 _init_session_state()
 
+# Handle forced rerun from callbacks (to properly dismiss video player)
+if st.session_state.get('_force_rerun'):
+    st.session_state._force_rerun = False
+    st.rerun()
+
 
 def sync_db():
     """Sync database with folder and invalidate caches."""
