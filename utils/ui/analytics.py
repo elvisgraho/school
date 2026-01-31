@@ -157,8 +157,8 @@ def render_analytics(db) -> None:
                 color=alt.Color('count:Q',
                                 scale=alt.Scale(
                                     type='threshold',
-                                    domain=[1, 3, 6, 10, 15],
-                                    range=['#2D2D2D', '#C6F6D5', '#9AE6B4', '#48BB78', '#276749', '#1C4532']
+                                    domain=[1, 3, 6, 10],
+                                    range=['#2D2D2D', '#0e4429', '#006d32', '#26a641', '#39d353']
                                 ),
                                 legend=None),
                 tooltip=[
@@ -186,18 +186,17 @@ def render_analytics(db) -> None:
                 heatmap
             ).configure_view(strokeWidth=0).configure_concat(spacing=0)
 
-            st.altair_chart(combined_chart, use_container_width=True)
+            st.altair_chart(combined_chart, width='stretch')
 
             # Color legend (GitHub style: Less - More)
             st.markdown("""
             <div style="display: flex; gap: 4px; justify-content: flex-end; align-items: center; margin-top: 4px; font-size: 0.7rem; color: #666;">
                 <span>Less</span>
-                <span style="display: inline-block; width: 10px; height: 10px; background: #2D2D2D; border-radius: 2px;"></span>
-                <span style="display: inline-block; width: 10px; height: 10px; background: #C6F6D5; border-radius: 2px;"></span>
-                <span style="display: inline-block; width: 10px; height: 10px; background: #9AE6B4; border-radius: 2px;"></span>
-                <span style="display: inline-block; width: 10px; height: 10px; background: #48BB78; border-radius: 2px;"></span>
-                <span style="display: inline-block; width: 10px; height: 10px; background: #276749; border-radius: 2px;"></span>
-                <span style="display: inline-block; width: 10px; height: 10px; background: #1C4532; border-radius: 2px;"></span>
+                <span style="display: inline-block; width: 10px; height: 10px; background: #161b22; border-radius: 2px;"></span>
+                <span style="display: inline-block; width: 10px; height: 10px; background: #0e4429; border-radius: 2px;"></span>
+                <span style="display: inline-block; width: 10px; height: 10px; background: #006d32; border-radius: 2px;"></span>
+                <span style="display: inline-block; width: 10px; height: 10px; background: #26a641; border-radius: 2px;"></span>
+                <span style="display: inline-block; width: 10px; height: 10px; background: #39d353; border-radius: 2px;"></span>
                 <span>More</span>
             </div>
             """, unsafe_allow_html=True)
@@ -390,7 +389,7 @@ def render_analytics(db) -> None:
                     key=f"date_{lesson['id']}",
                     on_click=set_lesson,
                     args=(lesson['id'],),
-                    use_container_width=True
+                    width='stretch'
                 )
         else:
             st.caption(f"No lessons completed on {selected_date.strftime('%b %d, %Y')}")
@@ -413,7 +412,7 @@ def render_analytics(db) -> None:
                 key=f"recent_{r['id']}",
                 on_click=set_lesson,
                 args=(r['id'],),
-                use_container_width=True
+                width='stretch'
             )
     else:
         st.caption("No recently completed lessons.")

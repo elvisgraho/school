@@ -95,7 +95,7 @@ def _render_library_sync(db, sync_db_func) -> None:
             st.session_state.folder_path = path
             st.session_state.db_synced = False
 
-    if st.button("Sync Library", type="secondary", use_container_width=True):
+    if st.button("Sync Library", type="secondary", width='stretch'):
         if st.session_state.folder_path and os.path.isdir(st.session_state.folder_path):
             with st.spinner("Scanning..."):
                 s = sync_db_func()

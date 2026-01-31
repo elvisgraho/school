@@ -16,6 +16,7 @@ GLOBAL_STYLES = """
 
     /* Sidebar */
     [data-testid="stSidebar"] {background-color: #1a1a1a; border-right: 1px solid #333;}
+    [data-testid="stSidebarCollapseButton"] {display: none !important;}
 
     /* Tab Styling */
     .stTabs [data-baseweb="tab-list"] {gap: 0.5rem; border-bottom: 1px solid #333; padding: 0 1rem;}

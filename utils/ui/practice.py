@@ -61,6 +61,10 @@ def render_practice_room(db) -> None:
     # Video Player
     video_path = lesson.get('filepath', '')
     if video_path and os.path.exists(video_path):
+        st.markdown(
+            '<style>video[data-testid="stVideo"] { max-height: 70vh; }</style>',
+            unsafe_allow_html=True,
+        )
         st.video(video_path)
     else:
         st.error(f"Video file not found: {lesson.get('filename', 'Unknown')}")
