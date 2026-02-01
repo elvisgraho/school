@@ -87,17 +87,47 @@ def render_progress_ring_compact(current: int, goal: int, label: str = "Today") 
 
 def get_milestone_message(streak: int) -> str:
     """Return milestone message if streak hits a milestone."""
-    if streak in MILESTONES:
+    if streak >= 1:
         messages = {
-            7: "One week strong!",
-            14: "Two weeks of dedication!",
-            30: "One month milestone!",
-            60: "Two months of consistency!",
-            90: "Quarter year achievement!",
-            180: "Half year champion!",
-            365: "One year legend!"
+            # Phase 1: The Spark (Days 1–21)
+            1: "The First Step. The hardest part is over—you chose to start.",
+            2: "Momentum Built. Back-to-back wins. The streak begins now.",
+            3: "Initial momentum established. Keep the chain unbroken.",
+            5: "The First Handshake. You are no longer a stranger to this craft.",
+            7: "Full Circle. Seven days, zero excuses. One week down!",
+            10: "Double digits achieved. You're building something real.",
+            14: "Fortnight Strength. Two weeks of proven dedication.",
+            21: "Habit formation threshold reached. Resistance is fading.",
+
+            # Phase 2: The Foundation (Days 30–100)
+            30: "Moon Phase. A full cycle of growth. You've evolved.",
+            45: "Half-quarter persistence verified. You're outlasting the crowd.",
+            60: "Two months of consistency. Your baseline has shifted.",
+            66: "Automaticity point. It is now harder to stop than to continue.",
+            75: "Hardening phase complete. Your discipline is becoming steel.",
+            90: "Seasonal Achievement. You've carried this fire through an entire quarter.",
+            100: "The Centurion. Triple-digit dominance. You're in the top 1%.",
+
+            # Phase 3: The Mastery (Days 150–365)
+            150: "Systemic routine integration. This is just who you are now.",
+            180: "Half-year champion! Six months of relentless progress.",
+            200: "Extended operational consistency. Your focus is unshakable.",
+            250: "Discipline output high. You've mastered the art of showing up.",
+            300: "Nearing full cycle completion. The legend is almost forged.",
+            365: "ONE YEAR LEGEND. You've conquered the calendar.",
+
+            # Phase 4: The Legacy (Days 400–1000)
+            400: "Beyond the Map. You've entered territory few ever see.",
+            500: "Half-Millennium. 500 days of choosing growth over comfort.",
+            600: "Quiet Authority. Your consistency is your most powerful asset.",
+            730: "Two-Year Titan. 730 days of excellence. A true master.",
+            850: "Unstoppable Force. Your momentum is now a law of nature.",
+            1000: "Four-digit Dominance. The Millennium Mark. You are the standard."
         }
-        return messages.get(streak, "")
+        reached = [m for m in messages if m <= streak]
+        if reached:
+            return messages[max(reached)]
+        return ""
     return ""
 
 

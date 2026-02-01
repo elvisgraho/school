@@ -267,11 +267,12 @@ def render_analytics(db) -> None:
         if monthly:
             df_m = pd.DataFrame(monthly)
             df_m['month'] = pd.to_datetime(df_m['month'] + '-01')
-            
+            df_m['label'] = df_m['month'].dt.strftime('%b %Y')
+
             chart_bar = alt.Chart(df_m).mark_bar(color='#718096', cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
-                x=alt.X('month:T', axis=alt.Axis(format='%b', title=None, grid=False)),
+                x=alt.X('label:N', axis=alt.Axis(title=None, grid=False), sort=df_m['label'].tolist()),
                 y=alt.Y('count:Q', title=None, axis=alt.Axis(grid=True, tickMinStep=1)),
-                tooltip=['month:T', 'count:Q']
+                tooltip=[alt.Tooltip('label:N', title='Month'), alt.Tooltip('count:Q', title='Count')]
             ).properties(height=220)
             st.altair_chart(chart_bar, width='stretch')
         else:
