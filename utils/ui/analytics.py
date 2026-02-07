@@ -61,7 +61,7 @@ def render_analytics(db) -> None:
     with w2:
         st.markdown("<div style='font-size: 0.85rem; color: #888; margin-bottom: 6px;'>This Week</div>", unsafe_allow_html=True)
         last_7_days = db.get_last_7_days_activity()
-        render_mini_bar_chart(last_7_days, height=60)
+        render_mini_bar_chart(last_7_days, height=80)
 
     with w3:
         monthly_comp = db.get_monthly_comparison()
@@ -126,6 +126,9 @@ def render_analytics(db) -> None:
             df_heat['week_num'] = ((df_heat['date'] - start_date).dt.days // 7)
             df_heat['month'] = df_heat['date'].dt.strftime('%b')
             df_heat['month_num'] = df_heat['date'].dt.month
+            
+            # Add date string for selection (Altair needs string for proper selection return)
+            df_heat['date_str'] = df_heat['date'].dt.strftime('%Y-%m-%d')
 
             # Day labels for y-axis (Mon, Wed, Fri visible)
             day_labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -137,11 +140,20 @@ def render_analytics(db) -> None:
                 'month': 'first'
             }).reset_index()
 
-            # Main heatmap
+            # Create selection for clickable days - use encodings for better compatibility
+            selection = alt.selection_point(
+                name='date_select',
+                encodings=['x', 'y'],  # Select by position
+                on='click',
+                empty=True
+            )
+
+            # Main heatmap with click selection (only days with activity are visually interactive)
             heatmap = alt.Chart(df_heat).mark_rect(
                 cornerRadius=2,
                 stroke='#1a1a1a',
-                strokeWidth=1
+                strokeWidth=1,
+                cursor='pointer'
             ).encode(
                 x=alt.X('week_num:O', axis=None, title=None),
                 y=alt.Y('day_of_week:O',
@@ -164,12 +176,19 @@ def render_analytics(db) -> None:
                 tooltip=[
                     alt.Tooltip('date:T', title='Date', format='%b %d, %Y'),
                     alt.Tooltip('count:Q', title='Lessons')
-                ]
+                ],
+                opacity=alt.condition(
+                    alt.datum.count > 0,
+                    alt.value(1),
+                    alt.value(0.5)  # Dim days with no activity
+                )
+            ).add_params(
+                selection
             ).properties(
                 height=110
             )
 
-            # Month labels on top
+            # Month labels on top (rendered separately to allow selection on heatmap)
             month_text = alt.Chart(month_labels).mark_text(
                 align='left',
                 baseline='bottom',
@@ -179,25 +198,53 @@ def render_analytics(db) -> None:
             ).encode(
                 x=alt.X('week_num:O', axis=None),
                 text='month:N'
+            ).properties(height=20)
+
+            # Render month labels (static, no interaction)
+            st.altair_chart(month_text.configure_view(strokeWidth=0), width='stretch')
+
+            # Render heatmap with selection callback
+            chart_selection = st.altair_chart(
+                heatmap.configure_view(strokeWidth=0),
+                width='stretch',
+                on_select="rerun"
             )
+            
+            # Handle click on heatmap - set browse_by_date if a day was clicked
+            if chart_selection:
+                # Selection is nested under chart_selection.selection.date_select
+                selection_data = chart_selection.get('selection', {})
+                selected_points = selection_data.get('date_select', [])
+                
+                if selected_points:
+                    for selected in selected_points:
+                        week_num = selected.get('week_num')
+                        day_of_week = selected.get('day_of_week')
+                        if week_num is not None and day_of_week is not None:
+                            # Find the matching date in our dataframe
+                            match = df_heat[
+                                (df_heat['week_num'] == week_num) &
+                                (df_heat['day_of_week'] == day_of_week)
+                            ]
+                            if not match.empty:
+                                clicked_date = match.iloc[0]['date']
+                                if isinstance(clicked_date, pd.Timestamp):
+                                    st.session_state['browse_by_date'] = clicked_date.date()
+                                break
 
-            combined_chart = alt.vconcat(
-                month_text.properties(height=20),
-                heatmap
-            ).configure_view(strokeWidth=0).configure_concat(spacing=0)
-
-            st.altair_chart(combined_chart, width='stretch')
-
-            # Color legend (GitHub style: Less - More)
+            # Color legend (GitHub style: Less - More) with click hint
             st.markdown("""
-            <div style="display: flex; gap: 4px; justify-content: flex-end; align-items: center; margin-top: 4px; font-size: 0.7rem; color: #666;">
-                <span>Less</span>
-                <span style="display: inline-block; width: 10px; height: 10px; background: #161b22; border-radius: 2px;"></span>
-                <span style="display: inline-block; width: 10px; height: 10px; background: #0e4429; border-radius: 2px;"></span>
-                <span style="display: inline-block; width: 10px; height: 10px; background: #006d32; border-radius: 2px;"></span>
-                <span style="display: inline-block; width: 10px; height: 10px; background: #26a641; border-radius: 2px;"></span>
-                <span style="display: inline-block; width: 10px; height: 10px; background: #39d353; border-radius: 2px;"></span>
-                <span>More</span>
+            <div style="display: flex; gap: 4px; justify-content: space-between; align-items: center; margin-top: 4px; font-size: 0.7rem; color: #666;">
+                <span style="opacity: 0.7;">Click a day to browse</span>
+                <div style="display: flex; gap: 4px; align-items: center;">
+                    <span>Less</span>
+                    <span style="display: inline-block; width: 10px; height: 10px; background: #161b22; border-radius: 2px;"></span>
+                    <span style="display: inline-block; width: 10px; height: 10px; background: #0e4429; border-radius: 2px;"></span>
+                    <span style="display: inline-block; width: 10px; height: 10px; background: #006d32; border-radius: 2px;"></span>
+                    <span style="display: inline-block; width: 10px; height: 10px; background: #26a641; border-radius: 2px;"></span>
+                    <span style="display: inline-block; width: 10px; height: 10px; background: #39d353; border-radius: 2px;"></span>
+                    <span>More</span>
+                </div>
             </div>
             """, unsafe_allow_html=True)
         else:
@@ -372,9 +419,12 @@ def render_analytics(db) -> None:
     # --- Section 6: Browse by Date ---
     st.markdown('<div class="section-label">Browse by Date</div>', unsafe_allow_html=True)
 
+    # Use session state value if set from heatmap click
+    default_date = st.session_state.pop('browse_by_date', None)
+    
     selected_date = st.date_input(
         "Select a date",
-        value=None,
+        value=default_date,
         max_value=datetime.now().date(),
         label_visibility="collapsed"
     )

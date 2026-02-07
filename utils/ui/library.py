@@ -22,7 +22,7 @@ def render_library(db) -> None:
     c1, c2, c3 = st.columns([1.5, 1, 1])
     with c1:
         status_options = ['All', 'New', 'In Progress', 'Completed', 'Hide Completed']
-        status_filter = st.selectbox("Status", status_options, key='lib_status')
+        status_filter = st.selectbox("Status", status_options, index=4, key='lib_status')
     with c2:
         years = db.get_years_with_lessons()
         current_year = datetime.now().year
@@ -91,14 +91,14 @@ def render_library(db) -> None:
     else:
         lessons, total_count = db.get_paginated_lessons(
             page=1,
-            page_size=500,  # Limit initial load - ag-grid handles client-side pagination
+            page_size=1000,  # Increased limit for better search results
             status_filter=s_filter,
             search_query=search if search else None,
             year_filter=y_filter,
             month_filter=m_filter,
             tag_ids=selected_tag_ids
         )
-
+    
     if not lessons:
         st.info("No lessons found matching criteria.")
         return

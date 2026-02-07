@@ -127,7 +127,7 @@ def render_discovery(db) -> None:
     # SECTION 2: SMART SUGGESTIONS (prioritizes In Progress, then New)
     st.markdown('<div class="section-label">Suggested for You</div>', unsafe_allow_html=True)
 
-    priority_lessons = db.get_priority_suggestions(limit=5)
+    priority_lessons = db.get_priority_suggestions(limit=3)
 
     if priority_lessons:
         priority_ids = [l['id'] for l in priority_lessons]
@@ -156,7 +156,7 @@ def render_discovery(db) -> None:
         # Collect all lesson IDs for batch tag fetch
         all_review_ids = []
         for lessons in spaced_suggestions.values():
-            all_review_ids.extend([l['id'] for l in lessons[:2]])
+            all_review_ids.extend([l['id'] for l in lessons[:4]])
         review_tags_map = db.get_tags_for_lessons(all_review_ids) if all_review_ids else {}
 
         interval_labels = {
@@ -171,7 +171,7 @@ def render_discovery(db) -> None:
             lessons = spaced_suggestions.get(interval_key, [])
             if lessons:
                 st.caption(interval_label)
-                for lesson in lessons[:2]:  # Max 2 per interval
+                for lesson in lessons[:4]:  # Max 4 per interval (2 random + 2 tagged)
                     lesson_id = lesson['id']
                     completed_date = lesson.get('completed_at', '')
                     if completed_date:

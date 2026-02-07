@@ -152,7 +152,12 @@ class StreaksMixin:
         }
 
     def get_spaced_repetition_suggestions(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Get lessons for review at spaced intervals."""
+        """Get lessons for review at spaced intervals.
+        
+        Returns 4 unique videos per interval:
+        - 2 random videos from the past
+        - 2 additional random videos that have at least one tag
+        """
         today = datetime.now().date()
         intervals = {
             '1_week': 7,
@@ -166,14 +171,44 @@ class StreaksMixin:
         with self._get_connection() as conn:
             for key, days in intervals.items():
                 target_date = today - timedelta(days=days)
-                rows = conn.execute('''
+                date_start = target_date - timedelta(days=2)
+                date_end = target_date + timedelta(days=2)
+                
+                # Get 2 random videos (any)
+                random_rows = conn.execute('''
                     SELECT id, title, author, completed_at
                     FROM lessons
                     WHERE status = 'Completed'
                     AND DATE(completed_at) BETWEEN DATE(?) AND DATE(?)
                     ORDER BY RANDOM()
-                    LIMIT 3
-                ''', (target_date - timedelta(days=2), target_date + timedelta(days=2))).fetchall()
-                results[key] = [dict(row) for row in rows]
+                    LIMIT 2
+                ''', (date_start, date_end)).fetchall()
+                
+                random_ids = [row['id'] for row in random_rows]
+                exclude_clause = f"AND id NOT IN ({','.join(['?'] * len(random_ids))})" if random_ids else ""
+                
+                # Get 2 additional random videos that have tags
+                tagged_rows = conn.execute(f'''
+                    SELECT DISTINCT l.id, l.title, l.author, l.completed_at
+                    FROM lessons l
+                    INNER JOIN lesson_tags lt ON l.id = lt.lesson_id
+                    WHERE l.status = 'Completed'
+                    AND DATE(l.completed_at) BETWEEN DATE(?) AND DATE(?)
+                    {exclude_clause}
+                    ORDER BY RANDOM()
+                    LIMIT 2
+                ''', [date_start, date_end] + random_ids).fetchall() if random_ids else conn.execute('''
+                    SELECT DISTINCT l.id, l.title, l.author, l.completed_at
+                    FROM lessons l
+                    INNER JOIN lesson_tags lt ON l.id = lt.lesson_id
+                    WHERE l.status = 'Completed'
+                    AND DATE(l.completed_at) BETWEEN DATE(?) AND DATE(?)
+                    ORDER BY RANDOM()
+                    LIMIT 2
+                ''', (date_start, date_end)).fetchall()
+                
+                # Combine results (random first, then tagged)
+                combined = [dict(row) for row in random_rows] + [dict(row) for row in tagged_rows]
+                results[key] = combined
 
         return results

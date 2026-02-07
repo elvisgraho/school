@@ -54,7 +54,11 @@ class LessonsMixin:
     """Mixin for lesson-related database operations."""
 
     def sync_folder(self, folder_path: str, parse_func) -> Dict[str, Any]:
-        """Sync lessons from folder using diff engine with content-based hashing."""
+        """Sync lessons from folder using optimized two-phase diff engine.
+        
+        Phase 1: Quick scan using file size + mtime (no hash computation)
+        Phase 2: Only compute hashes for new/changed files
+        """
         stats = {'added': 0, 'updated': 0, 'archived': 0, 'errors': 0, 'unchanged': 0}
 
         if not os.path.isdir(folder_path):
@@ -77,75 +81,112 @@ class LessonsMixin:
             except (OSError, IOError):
                 return None
 
-        file_data = []
+        # Phase 1: Quick scan - collect file metadata without computing hashes
+        file_metadata = []  # (filepath, filename, size, mtime)
 
         try:
             with os.scandir(folder_path) as entries:
                 for entry in entries:
                     if entry.is_file() and entry.name.lower().endswith('.mp4'):
                         try:
-                            mtime = entry.stat().st_mtime
+                            stat_info = entry.stat()
                             filepath = os.path.normpath(os.path.join(folder_path, entry.name))
-                            file_hash = compute_file_hash(filepath)
-                            if file_hash:
-                                # Check for matching .srt file
-                                base_name = os.path.splitext(entry.name)[0]
-                                srt_path = os.path.join(folder_path, base_name + '.srt')
-                                transcript = None
-                                if os.path.isfile(srt_path):
-                                    transcript = parse_srt_file(srt_path)
-                                file_data.append((file_hash, filepath, entry.name, mtime, transcript))
-                            else:
-                                stats['errors'] += 1
+                            file_metadata.append((filepath, entry.name, stat_info.st_size, stat_info.st_mtime))
                         except (OSError, IOError):
                             stats['errors'] += 1
         except OSError:
             stats['errors'] = 1
             return stats
 
-        if not file_data:
+        if not file_metadata:
             return stats
 
-        current_hashes = set()
+        current_filepaths = set()
 
         with self._get_connection() as conn:
-            existing_lookup = {}
+            # Build lookup by filepath for quick comparison
+            existing_by_path = {}
             rows = conn.execute('SELECT id, file_hash, filepath, filename, status, file_mtime, transcript FROM lessons').fetchall()
             for row in rows:
-                existing_lookup[row['file_hash']] = dict(row)
+                existing_by_path[row['filepath']] = dict(row)
 
             to_insert = []
             to_update = []
+            current_hashes = set()
 
-            for file_hash, filepath, filename, mtime, transcript in file_data:
+            for filepath, filename, size, mtime in file_metadata:
                 parsed = parse_func(filename)
                 if not parsed:
                     stats['errors'] += 1
                     continue
 
-                current_hashes.add(file_hash)
+                current_filepaths.add(filepath)
+                existing = existing_by_path.get(filepath)
 
-                if file_hash in existing_lookup:
-                    existing = existing_lookup[file_hash]
-                    # Update if path/mtime changed, or if we now have a transcript we didn't before
-                    needs_update = (
-                        existing['filepath'] != filepath or
-                        existing.get('file_mtime', 0) != mtime or
-                        (transcript and not existing.get('transcript'))
-                    )
-                    if needs_update:
+                if existing:
+                    # File exists - check if it changed using mtime (fast, no hash needed)
+                    existing_mtime = existing.get('file_mtime', 0) or 0
+                    if existing_mtime == mtime:
+                        # Unchanged - skip hash computation entirely
+                        stats['unchanged'] += 1
+                        current_hashes.add(existing['file_hash'])
+                        continue
+
+                    # File changed - compute hash to determine if content actually changed
+                    file_hash = compute_file_hash(filepath)
+                    if not file_hash:
+                        stats['errors'] += 1
+                        continue
+
+                    current_hashes.add(file_hash)
+
+                    # Check if content actually changed (hash differs) or just mtime
+                    if file_hash == existing['file_hash']:
+                        # Same content, just mtime changed - update mtime only
                         to_update.append({
                             'id': existing['id'],
                             'filename': filename,
                             'filepath': filepath,
                             'mtime': mtime,
-                            'status': existing['status'],
-                            'transcript': transcript if transcript else existing.get('transcript')
+                            'transcript': existing.get('transcript')
                         })
                         stats['updated'] += 1
                     else:
-                        stats['unchanged'] += 1
+                        # Content changed - treat as new file (old one will be archived if path differs)
+                        # Check for matching .srt file
+                        base_name = os.path.splitext(filename)[0]
+                        srt_path = os.path.join(folder_path, base_name + '.srt')
+                        transcript = None
+                        if os.path.isfile(srt_path):
+                            transcript = parse_srt_file(srt_path)
+                        
+                        to_insert.append({
+                            'file_hash': file_hash,
+                            'filepath': filepath,
+                            'filename': filename,
+                            'author': parsed['author'],
+                            'title': parsed['title'],
+                            'lesson_date': parsed['lesson_date'],
+                            'mtime': mtime,
+                            'transcript': transcript
+                        })
+                        stats['added'] += 1
                 else:
+                    # New file - need to compute hash
+                    file_hash = compute_file_hash(filepath)
+                    if not file_hash:
+                        stats['errors'] += 1
+                        continue
+
+                    current_hashes.add(file_hash)
+
+                    # Check for matching .srt file
+                    base_name = os.path.splitext(filename)[0]
+                    srt_path = os.path.join(folder_path, base_name + '.srt')
+                    transcript = None
+                    if os.path.isfile(srt_path):
+                        transcript = parse_srt_file(srt_path)
+
                     to_insert.append({
                         'file_hash': file_hash,
                         'filepath': filepath,
@@ -171,12 +212,13 @@ class LessonsMixin:
                     WHERE id = ?
                 ''', [(r['filename'], r['filepath'], r['mtime'], r['transcript'], r['id']) for r in to_update])
 
-            if current_hashes:
-                placeholders = ','.join('?' * len(current_hashes))
+            # Archive files that no longer exist in folder
+            if current_filepaths:
+                placeholders = ','.join('?' * len(current_filepaths))
                 archived = conn.execute(f'''
                     UPDATE lessons SET status = 'Archived', updated_at = CURRENT_TIMESTAMP
-                    WHERE file_hash NOT IN ({placeholders}) AND status != 'Archived'
-                ''', tuple(current_hashes)).rowcount
+                    WHERE filepath NOT IN ({placeholders}) AND status != 'Archived'
+                ''', tuple(current_filepaths)).rowcount
                 stats['archived'] = archived
 
         return stats
@@ -214,8 +256,8 @@ class LessonsMixin:
             params.append(date_to)
 
         if search_query:
-            conditions.append('title LIKE ?')
-            params.append(f'%{search_query}%')
+            conditions.append('(title LIKE ? OR author LIKE ?)')
+            params.extend([f'%{search_query}%', f'%{search_query}%'])
 
         if year_filter:
             conditions.append('strftime("%Y", lesson_date) = ?')

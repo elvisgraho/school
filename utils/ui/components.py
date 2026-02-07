@@ -230,14 +230,20 @@ def render_mini_bar_chart(data: List[Dict[str, Any]], height: int = 80) -> None:
     chart = alt.Chart(df).mark_bar(
         color='#4299E1',
         cornerRadiusTopLeft=2,
-        cornerRadiusTopRight=2
+        cornerRadiusTopRight=2,
+        size=20  # Fixed bar width for consistent spacing
     ).encode(
-        x=alt.X('day:N', axis=alt.Axis(labelAngle=0, title=None), sort=None),
+        x=alt.X('day:N', axis=alt.Axis(labelAngle=0, title=None, labelPadding=4), sort=None),
         y=alt.Y('count:Q', axis=alt.Axis(title=None, tickMinStep=1)),
         tooltip=['date:N', 'count:Q']
     ).properties(
         height=height
-    ).configure_view(strokeWidth=0)
+    ).configure_view(
+        strokeWidth=0
+    ).configure_scale(
+        bandPaddingInner=0.4,  # Add spacing between bars
+        bandPaddingOuter=0.2
+    )
 
     st.altair_chart(chart, width='stretch')
 

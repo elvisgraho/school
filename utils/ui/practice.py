@@ -42,7 +42,7 @@ def render_practice_room(db) -> None:
     playlist_index = st.session_state.get('playlist_index', 0)
     is_playlist_mode = len(playlist_ids) > 0
     playlist_total = len(playlist_ids)
-    playlist_position = playlist_index + 1  # 1-based for display
+    playlist_position = playlist_index
 
     # Header with playlist progress
     if is_playlist_mode:
