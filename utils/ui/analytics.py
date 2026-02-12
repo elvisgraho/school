@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from .styles import apply_conservative_style
 from .callbacks import set_lesson
 from .components import (
-    render_progress_ring_compact,
     render_mini_bar_chart,
     render_trend_indicator,
     render_personal_record_card,
@@ -26,8 +25,6 @@ def render_analytics(db) -> None:
     stats = db.get_stats()
     streak_info = db.get_streak_recovery_info()
     activity_365 = db.get_activity_data(days=365)
-    daily_progress = db.get_daily_progress()
-    weekly_progress = db.get_weekly_progress()
 
     # --- Section 1: Top Level Metrics ---
     st.markdown('<div class="section-label">Snapshot</div>', unsafe_allow_html=True)
@@ -49,27 +46,16 @@ def render_analytics(db) -> None:
     # --- Section 1.5: Progress Dashboard Widgets ---
     st.markdown('<div class="section-label">Progress Dashboard</div>', unsafe_allow_html=True)
 
-    w1, w2, w3 = st.columns(3)
+    st.markdown("<div style='font-size: 0.85rem; color: #888; margin-bottom: 6px;'>This Week</div>", unsafe_allow_html=True)
+    last_7_days = db.get_last_7_days_activity()
+    render_mini_bar_chart(last_7_days, height=150)
 
-    with w1:
-        render_progress_ring_compact(
-            current=daily_progress['completed'],
-            goal=daily_progress['goal'],
-            label="Daily Goal"
-        )
-
-    with w2:
-        st.markdown("<div style='font-size: 0.85rem; color: #888; margin-bottom: 6px;'>This Week</div>", unsafe_allow_html=True)
-        last_7_days = db.get_last_7_days_activity()
-        render_mini_bar_chart(last_7_days, height=80)
-
-    with w3:
-        monthly_comp = db.get_monthly_comparison()
-        render_trend_indicator(
-            current=monthly_comp['current'],
-            previous=monthly_comp['previous'],
-            label="This Month"
-        )
+    monthly_comp = db.get_monthly_comparison()
+    render_trend_indicator(
+        current=monthly_comp['current'],
+        previous=monthly_comp['previous'],
+        label="This Month"
+    )
 
     st.markdown("---")
 
