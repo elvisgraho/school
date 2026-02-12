@@ -130,6 +130,10 @@ def apply_conservative_style():
                 max-height: none !important;
                 overflow: visible !important;
             }
+                
+            details[title="Click to view actions"] {
+                display: none;
+            }
 
             /* Fix Altair chart clipping in columns */
             [data-testid="stColumn"],
