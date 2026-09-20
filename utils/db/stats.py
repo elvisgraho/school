@@ -65,7 +65,10 @@ class StatsMixin:
         """Get non-archived library video counts by author."""
         with self._get_connection() as conn:
             query = '''
-                SELECT author, COUNT(*) as count
+                SELECT author,
+                       COUNT(*) as count,
+                       MIN(lesson_date) as first_date,
+                       MAX(lesson_date) as last_date
                 FROM lessons
                 WHERE status != 'Archived'
                 GROUP BY author

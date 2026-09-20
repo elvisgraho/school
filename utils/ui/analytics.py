@@ -49,6 +49,23 @@ def _get_consistency_gap_stats(activity_data, today):
     }
 
 
+def _format_year_month_span(first_date, last_date):
+    """Format the elapsed calendar time between two library dates."""
+    first = pd.Timestamp(first_date).date()
+    last = pd.Timestamp(last_date).date()
+    months = (last.year - first.year) * 12 + last.month - first.month
+    if last.day < first.day:
+        months -= 1
+
+    years, remaining_months = divmod(max(0, months), 12)
+    parts = []
+    if years:
+        parts.append(f"{years}y")
+    if remaining_months or not parts:
+        parts.append(f"{remaining_months}m")
+    return " ".join(parts)
+
+
 def render_analytics(db) -> None:
     """Render Analytics with a focus on consistency and progress trends."""
     apply_conservative_style()
@@ -518,10 +535,14 @@ def render_analytics(db) -> None:
     st.markdown("---")
 
     # --- Section 7: Top Authors ---
-    st.markdown('<div class="section-label">Top 10 Authors</div>', unsafe_allow_html=True)
-    top_authors = db.get_author_breakdown(limit=10)
+    st.markdown('<div class="section-label">Top 15 Authors</div>', unsafe_allow_html=True)
+    top_authors = db.get_author_breakdown(limit=15)
     if top_authors:
         df_authors = pd.DataFrame(top_authors)
+        df_authors['time_span'] = df_authors.apply(
+            lambda author: _format_year_month_span(author['first_date'], author['last_date']),
+            axis=1,
+        )
         author_chart = alt.Chart(df_authors).mark_bar(
             color='#718096',
             cornerRadiusTopLeft=3,
@@ -537,6 +558,8 @@ def render_analytics(db) -> None:
             tooltip=[
                 alt.Tooltip('author:N', title='Author'),
                 alt.Tooltip('count:Q', title='Videos'),
+                alt.Tooltip('first_date:T', title='First', format='%d/%m/%Y'),
+                alt.Tooltip('time_span:N', title='Time'),
             ],
         ).properties(height=250)
         st.altair_chart(author_chart, width='stretch')
