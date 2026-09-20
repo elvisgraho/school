@@ -2,7 +2,8 @@
 Streak tracking and goal management.
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from math import ceil
 from typing import Dict, Any, List
 
 
@@ -45,21 +46,14 @@ class StreaksMixin:
 
     def get_best_streak(self) -> int:
         """Get the all-time best streak length."""
-        with self._get_connection() as conn:
-            row = conn.execute(
-                'SELECT MAX(streak_length) as best FROM streak_history'
-            ).fetchone()
-            db_best = row['best'] if row and row['best'] else 0
-
-            current = self.get_current_streak()
-            return max(db_best, current)
+        return self._get_longest_streak()
 
     def save_streak_if_record(self, streak_length: int, start_date, end_date) -> bool:
         """Save streak to history. Returns True if it's a new record."""
         if streak_length <= 0:
             return False
 
-        current_best = self.get_best_streak()
+        current_best = self._get_longest_streak()
         is_record = streak_length > current_best
 
         with self._get_connection() as conn:
@@ -74,14 +68,44 @@ class StreaksMixin:
         """Get info for streak recovery message."""
         current = self.get_current_streak()
         best = self.get_best_streak()
+        prior_best = self._get_longest_streak(exclude_current=True)
         days_to_beat = max(0, best - current + 1) if best > current else 0
 
         return {
             'current': current,
             'best': best,
             'days_to_beat': days_to_beat,
-            'is_at_best': current >= best and current > 0
+            # Only celebrate when this active run has actually surpassed a
+            # previous run.  Including the current run in ``best`` alone
+            # would make every streak appear to be a personal best.
+            'is_at_best': prior_best > 0 and current > prior_best
         }
+
+    def _get_longest_streak(self, exclude_current: bool = False) -> int:
+        """Return the longest completion streak, optionally excluding today’s run."""
+        with self._get_connection() as conn:
+            rows = conn.execute('''
+                SELECT DISTINCT DATE(completed_at) AS date
+                FROM lessons
+                WHERE status = 'Completed' AND completed_at IS NOT NULL
+                ORDER BY date
+            ''').fetchall()
+
+        dates = [datetime.strptime(row['date'], '%Y-%m-%d').date() for row in rows]
+        if exclude_current and dates:
+            current = self.get_current_streak()
+            if current:
+                active_end = date.today() if date.today() in dates else date.today() - timedelta(days=1)
+                cutoff = active_end - timedelta(days=current - 1)
+                dates = [completed_date for completed_date in dates if completed_date < cutoff]
+
+        longest = run = 0
+        previous = None
+        for completed_date in dates:
+            run = run + 1 if previous and completed_date == previous + timedelta(days=1) else 1
+            longest = max(longest, run)
+            previous = completed_date
+        return longest
 
     # ==================== DAILY/WEEKLY GOAL METHODS ====================
 
@@ -94,12 +118,42 @@ class StreaksMixin:
             return 3
 
     def get_weekly_goal(self) -> int:
-        """Get configured weekly goal (default: 15)."""
-        value = self.get_setting('weekly_goal', '15')
+        """Return the weekly target derived from the daily goal."""
+        return self.get_daily_goal() * 7
+
+    def get_remaining_lessons(self) -> int:
+        """Return non-archived lessons that are not yet completed."""
+        with self._get_connection() as conn:
+            row = conn.execute('''
+                SELECT COUNT(*) AS count
+                FROM lessons
+                WHERE status NOT IN ('Completed', 'Archived')
+            ''').fetchone()
+            return row['count'] if row else 0
+
+    def calculate_deadline_daily_goal(self, end_date: date) -> int:
+        """Calculate the whole-lesson daily target needed through ``end_date``."""
+        days_remaining = (end_date - date.today()).days + 1
+        if days_remaining <= 0:
+            raise ValueError('The target date must be in the future.')
+        return ceil(self.get_remaining_lessons() / days_remaining)
+
+    def refresh_deadline_goal(self) -> bool:
+        """Refresh an enabled deadline goal and return whether its daily target changed."""
+        if self.get_setting('deadline_goal_enabled', 'false') != 'true':
+            return False
+
+        raw_end_date = self.get_setting('deadline_goal_date')
         try:
-            return int(value)
-        except (ValueError, TypeError):
-            return 15
+            end_date = date.fromisoformat(raw_end_date)
+            daily_goal = self.calculate_deadline_daily_goal(end_date)
+        except (TypeError, ValueError):
+            return False
+
+        if self.get_daily_goal() == daily_goal:
+            return False
+        self.set_setting('daily_goal', str(daily_goal))
+        return True
 
     def get_today_completions(self) -> int:
         """Get number of lessons completed today."""

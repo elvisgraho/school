@@ -5,6 +5,7 @@ Contains stats, library sync, goals settings, and metronome.
 
 import streamlit as st
 import os
+from datetime import date, timedelta
 from .metronome import render_metronome
 
 # Try to import tkinter (not available in embedded Python)
@@ -109,28 +110,53 @@ def _render_goals_settings(db) -> None:
     """Render goals settings expander."""
     with st.expander("Goals Settings", expanded=False):
         current_daily = db.get_daily_goal()
-        current_weekly = db.get_weekly_goal()
+        deadline_enabled = db.get_setting('deadline_goal_enabled', 'false') == 'true'
+        saved_deadline = db.get_setting('deadline_goal_date')
+        try:
+            deadline_default = date.fromisoformat(saved_deadline) if saved_deadline else date.today() + timedelta(days=30)
+        except ValueError:
+            deadline_default = date.today() + timedelta(days=30)
+        deadline_default = max(deadline_default, date.today() + timedelta(days=1))
+
+        use_deadline = st.toggle(
+            "Finish all remaining lessons by a date",
+            value=deadline_enabled,
+            key="settings_deadline_enabled",
+            help="Locks the daily target and recalculates it from your remaining lessons and target date."
+        )
+        deadline_date = st.date_input(
+            "Target completion date",
+            value=deadline_default,
+            min_value=date.today() + timedelta(days=1),
+            format="DD/MM/YYYY",
+            disabled=not use_deadline,
+            key="settings_deadline_date"
+        )
+
+        calculated_daily = current_daily
+        if use_deadline:
+            calculated_daily = db.calculate_deadline_daily_goal(deadline_date)
+            st.caption(
+                f"{db.get_remaining_lessons():,} lessons remaining — {calculated_daily} lessons/day needed.")
 
         new_daily = st.number_input(
             "Daily Goal (lessons/day)",
-            min_value=1,
-            max_value=20,
-            value=current_daily,
+            min_value=0 if use_deadline else 1,
+            max_value=max(20, calculated_daily),
+            value=calculated_daily if use_deadline else current_daily,
             step=1,
-            key="settings_daily_goal"
+            key="settings_daily_goal",
+            disabled=use_deadline
         )
 
-        new_weekly = st.number_input(
-            "Weekly Goal (lessons/week)",
-            min_value=1,
-            max_value=100,
-            value=current_weekly,
-            step=1,
-            key="settings_weekly_goal"
-        )
+        st.caption(f"Weekly target: {calculated_daily if use_deadline else new_daily} lessons/day × 7 = {(calculated_daily if use_deadline else new_daily) * 7} lessons/week")
 
         if st.button("Save Goals", width='stretch'):
-            db.set_setting('daily_goal', str(new_daily))
-            db.set_setting('weekly_goal', str(new_weekly))
+            db.set_setting('deadline_goal_enabled', str(use_deadline).lower())
+            if use_deadline:
+                db.set_setting('deadline_goal_date', deadline_date.isoformat())
+                db.refresh_deadline_goal()
+            else:
+                db.set_setting('daily_goal', str(new_daily))
             st.success("Goals saved!")
             st.rerun()

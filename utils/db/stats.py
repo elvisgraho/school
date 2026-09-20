@@ -61,17 +61,33 @@ class StatsMixin:
             ''', (f'-{months} months',)).fetchall()
             return [dict(row) for row in rows]
 
-    def get_author_breakdown(self) -> List[Dict[str, Any]]:
-        """Get completion breakdown by author."""
+    def get_author_breakdown(self, limit: int = None) -> List[Dict[str, Any]]:
+        """Get non-archived library video counts by author."""
         with self._get_connection() as conn:
-            rows = conn.execute('''
+            query = '''
                 SELECT author, COUNT(*) as count
                 FROM lessons
-                WHERE status = 'Completed'
+                WHERE status != 'Archived'
                 GROUP BY author
-                ORDER BY count DESC
-            ''').fetchall()
+                ORDER BY count DESC, author ASC
+            '''
+            if limit is not None:
+                query += ' LIMIT ?'
+                rows = conn.execute(query, (limit,)).fetchall()
+            else:
+                rows = conn.execute(query).fetchall()
             return [dict(row) for row in rows]
+
+    def get_library_authors(self) -> List[str]:
+        """Return every selectable author in the active library."""
+        with self._get_connection() as conn:
+            rows = conn.execute('''
+                SELECT DISTINCT author
+                FROM lessons
+                WHERE status != 'Archived' AND TRIM(author) != ''
+                ORDER BY author COLLATE NOCASE
+            ''').fetchall()
+            return [row['author'] for row in rows]
 
     def get_recent_completions(self, limit: int = 5) -> List[Dict[str, Any]]:
         """Get the most recently completed lessons."""

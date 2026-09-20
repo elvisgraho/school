@@ -36,8 +36,16 @@ def render_library(db) -> None:
     # Determine hide_completed from status selection
     hide_completed = status_filter == 'Hide Completed'
 
-    # Filter Controls - Row 2: Tags and Search
-    tag_col, search_col = st.columns([1, 1])
+    # Filter Controls - Row 2: Author, Tags, and Search
+    author_col, tag_col, search_col = st.columns([1, 1, 1])
+    with author_col:
+        author_options = ['All'] + db.get_library_authors()
+        selected_author = st.selectbox(
+            "Author",
+            options=author_options,
+            key='lib_author',
+            help="Type to search existing authors; only listed authors can be selected."
+        )
     with tag_col:
         all_tags = db.get_all_tags()
         tag_options = {tag['name']: tag['id'] for tag in all_tags}
@@ -77,6 +85,7 @@ def render_library(db) -> None:
         s_filter = [status_filter]
     y_filter = int(selected_year) if selected_year != 'All' else None
     m_filter = month_options.index(selected_month) if selected_month != 'All' else None
+    author_filter = selected_author if selected_author != 'All' else None
 
     # Fetch data - use transcript search if active, otherwise regular search
     if is_transcript_search:
@@ -84,6 +93,7 @@ def render_library(db) -> None:
             query=transcript_search.strip(),
             page_size=500,
             status_filter=s_filter,
+            author_filter=author_filter,
             year_filter=y_filter,
             month_filter=m_filter,
             tag_ids=selected_tag_ids
@@ -93,6 +103,7 @@ def render_library(db) -> None:
             page=1,
             page_size=1000,  # Increased limit for better search results
             status_filter=s_filter,
+            author_filter=author_filter,
             search_query=search if search else None,
             year_filter=y_filter,
             month_filter=m_filter,

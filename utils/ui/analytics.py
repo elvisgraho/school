@@ -17,6 +17,38 @@ from .components import (
 )
 
 
+def _get_consistency_gap_stats(activity_data, today):
+    """Summarize missed calendar days since the first recent completion."""
+    window_start = today - timedelta(days=364)
+    completed_dates = {
+        pd.Timestamp(item['date']).date()
+        for item in activity_data
+        if window_start <= pd.Timestamp(item['date']).date() <= today and item.get('count', 0) > 0
+    }
+    if not completed_dates:
+        return None
+
+    first_completed = min(completed_dates)
+    total_missed = 0
+    longest_break = 0
+    current_break = 0
+    day = first_completed
+    while day <= today:
+        if day in completed_dates:
+            current_break = 0
+        else:
+            total_missed += 1
+            current_break += 1
+            longest_break = max(longest_break, current_break)
+        day += timedelta(days=1)
+
+    return {
+        'first_completed': first_completed,
+        'longest_break': longest_break,
+        'total_missed': total_missed,
+    }
+
+
 def render_analytics(db) -> None:
     """Render Analytics with a focus on consistency and progress trends."""
     apply_conservative_style()
@@ -111,7 +143,11 @@ def render_analytics(db) -> None:
             df_heat['day_of_week'] = df_heat['date'].dt.weekday  # Mon=0, Sun=6
             df_heat['week_num'] = ((df_heat['date'] - start_date).dt.days // 7)
             df_heat['month'] = df_heat['date'].dt.strftime('%b')
-            df_heat['month_num'] = df_heat['date'].dt.month
+            # A rolling 365-day view can contain the same calendar month twice
+            # (for example Sep 2025 and Sep 2026), so month number alone is
+            # not a unique label position.
+            df_heat['month_key'] = df_heat['date'].dt.strftime('%Y-%m')
+            week_domain = list(range(df_heat['week_num'].max() + 1))
             
             # Add date string for selection (Altair needs string for proper selection return)
             df_heat['date_str'] = df_heat['date'].dt.strftime('%Y-%m-%d')
@@ -120,8 +156,9 @@ def render_analytics(db) -> None:
             day_labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
             df_heat['day_name'] = df_heat['day_of_week'].apply(lambda x: day_labels[x])
 
-            # Get month positions for labels (first week of each month)
-            month_labels = df_heat.groupby('month_num').agg({
+            # Get month positions for labels (first week of each year-month).
+            # ``sort=False`` preserves the left-to-right calendar order.
+            month_labels = df_heat.groupby('month_key', sort=False).agg({
                 'week_num': 'first',
                 'month': 'first'
             }).reset_index()
@@ -141,7 +178,7 @@ def render_analytics(db) -> None:
                 strokeWidth=1,
                 cursor='pointer'
             ).encode(
-                x=alt.X('week_num:O', axis=None, title=None),
+                x=alt.X('week_num:O', axis=None, title=None, scale=alt.Scale(domain=week_domain)),
                 y=alt.Y('day_of_week:O',
                         axis=alt.Axis(
                             labels=True,
@@ -182,16 +219,21 @@ def render_analytics(db) -> None:
                 fontSize=10,
                 color='#666'
             ).encode(
-                x=alt.X('week_num:O', axis=None),
+                # Use the exact same week domain as the heatmap. Without it,
+                # Altair spaces only the 12 month-label values across the chart,
+                # so labels drift into the following month.
+                x=alt.X('week_num:O', axis=None, scale=alt.Scale(domain=week_domain)),
                 text='month:N'
             ).properties(height=20)
 
-            # Render month labels (static, no interaction)
-            st.altair_chart(month_text.configure_view(strokeWidth=0), width='stretch')
+            # Keep labels and cells in one vertically concatenated chart. This
+            # reserves the heatmap's day-label gutter for both rows, preventing
+            # the month labels from shifting left by roughly one week.
+            consistency_chart = alt.vconcat(month_text, heatmap, spacing=0).resolve_scale(x='shared')
 
-            # Render heatmap with selection callback
+            # Render the aligned map with selection callback.
             chart_selection = st.altair_chart(
-                heatmap.configure_view(strokeWidth=0),
+                consistency_chart.configure_view(strokeWidth=0),
                 width='stretch',
                 on_select="rerun"
             )
@@ -233,12 +275,22 @@ def render_analytics(db) -> None:
                 </div>
             </div>
             """, unsafe_allow_html=True)
+
+            gap_stats = _get_consistency_gap_stats(activity_365, datetime.now().date())
+            if gap_stats:
+                st.markdown(f"""
+                <div style="font-size: 0.8rem; color: #888; line-height: 1.5; margin-top: 6px; margin-bottom: -8px;">
+                    <div>Tracked since {gap_stats['first_completed'].strftime('%b %d, %Y')} (up to 365 days)</div>
+                    <div>Longest break — {gap_stats['longest_break']} days</div>
+                    <div>Days missed — {gap_stats['total_missed']}</div>
+                </div>
+                """, unsafe_allow_html=True)
         else:
             st.info(f"No completion data for {selected_year}.")
     else:
         st.info("Complete your first lesson to generate the consistency map.")
 
-    st.markdown("---")
+    st.markdown("<hr style='margin: 8px 0 16px;'>", unsafe_allow_html=True)
     
     # --- Section 3: Progress & Habits (Grid Layout) ---
     c_left, c_right = st.columns([1, 1])
@@ -358,7 +410,7 @@ def render_analytics(db) -> None:
     # Compute records (this also updates the database cache)
     records = db.compute_and_update_records()
 
-    r1, r2, r3, r4, r5 = st.columns(5)
+    r1, r2, r3, r4 = st.columns(4)
 
     with r1:
         render_personal_record_card(
@@ -391,13 +443,37 @@ def render_analytics(db) -> None:
             month_rec.get('month', '')
         )
 
+    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+    r5, r6, r7 = st.columns(3)
+
     with r5:
         consistent = records.get('most_consistent', {})
-        avg_val = consistent.get('avg_per_day')
+        week_start = consistent.get('week_start')
+        week_label = (
+            datetime.strptime(week_start, '%Y-%m-%d').strftime('%d %b %Y')
+            if week_start else None
+        )
         render_personal_record_card(
             "Most Consistent",
-            f"{avg_val}/day avg" if avg_val is not None else "N/A",
-            f"Week {consistent.get('week', '')}" if consistent.get('week') else None
+            f"{consistent.get('total_lessons', 0)} - {consistent.get('average_per_day', 0):.1f}/day",
+            week_label
+        )
+
+    with r6:
+        rolling_week = records.get('best_rolling_7', {})
+        render_personal_record_card(
+            "Best 7-Day Run",
+            rolling_week.get('value', 0),
+            rolling_week.get('end_date', '')
+        )
+
+    with r7:
+        rolling_month = records.get('best_rolling_30', {})
+        render_personal_record_card(
+            "Best 30-Day Run",
+            rolling_month.get('value', 0),
+            rolling_month.get('end_date', '')
         )
 
     st.markdown("---")
@@ -406,20 +482,26 @@ def render_analytics(db) -> None:
     st.markdown('<div class="section-label">Browse by Date</div>', unsafe_allow_html=True)
 
     # Use session state value if set from heatmap click
-    default_date = st.session_state.pop('browse_by_date', None)
+    default_date = st.session_state.pop('browse_by_date', today)
+    first_activity_date = min(
+        (datetime.strptime(item['date'], '%Y-%m-%d').date() for item in activity_365),
+        default=today,
+    )
     
     selected_date = st.date_input(
         "Select a date",
         value=default_date,
-        max_value=datetime.now().date(),
-        label_visibility="collapsed"
+        min_value=first_activity_date,
+        max_value=today,
+        format="DD/MM/YYYY",
+        label_visibility="collapsed",
     )
 
     if selected_date:
         date_str = selected_date.strftime('%Y-%m-%d')
         lessons_on_date = db.get_lessons_completed_on_date(date_str)
         if lessons_on_date:
-            st.caption(f"{len(lessons_on_date)} lesson(s) completed on {selected_date.strftime('%b %d, %Y')}")
+            st.caption(f"{len(lessons_on_date)} lesson(s) completed on {selected_date.strftime('%d %B %Y')}")
             for lesson in lessons_on_date:
                 st.button(
                     f"{lesson['title']}\n{lesson['author']}",
@@ -429,30 +511,37 @@ def render_analytics(db) -> None:
                     width='stretch'
                 )
         else:
-            st.caption(f"No lessons completed on {selected_date.strftime('%b %d, %Y')}")
+            st.caption(f"No lessons completed on {selected_date.strftime('%d %B %Y')}")
     else:
         st.caption("Select a date to view completed lessons")
 
     st.markdown("---")
 
-    # --- Section 7: Recent History ---
-    st.markdown('<div class="section-label">Recently Completed</div>', unsafe_allow_html=True)
-    recent = db.get_recent_completions(limit=5)
-    if recent:
-        for r in recent:
-            try:
-                date_str = datetime.strptime(r['completed_at'], '%Y-%m-%d %H:%M:%S.%f').strftime('%b %d')
-            except ValueError:
-                date_str = datetime.strptime(r['completed_at'], '%Y-%m-%d %H:%M:%S').strftime('%b %d')
-            st.button(
-                f"{r['title']}\n{r['author']} • {date_str}",
-                key=f"recent_{r['id']}",
-                on_click=set_lesson,
-                args=(r['id'],),
-                width='stretch'
-            )
+    # --- Section 7: Top Authors ---
+    st.markdown('<div class="section-label">Top 10 Authors</div>', unsafe_allow_html=True)
+    top_authors = db.get_author_breakdown(limit=10)
+    if top_authors:
+        df_authors = pd.DataFrame(top_authors)
+        author_chart = alt.Chart(df_authors).mark_bar(
+            color='#718096',
+            cornerRadiusTopLeft=3,
+            cornerRadiusTopRight=3,
+        ).encode(
+            x=alt.X(
+                'author:N',
+                title=None,
+                sort=alt.SortField(field='count', order='descending'),
+                axis=alt.Axis(labelAngle=-35, labelLimit=130),
+            ),
+            y=alt.Y('count:Q', title='Videos', axis=alt.Axis(tickMinStep=1)),
+            tooltip=[
+                alt.Tooltip('author:N', title='Author'),
+                alt.Tooltip('count:Q', title='Videos'),
+            ],
+        ).properties(height=250)
+        st.altair_chart(author_chart, width='stretch')
     else:
-        st.caption("No recently completed lessons.")
+        st.caption("No authors in the library yet.")
 
     st.markdown("---")
 

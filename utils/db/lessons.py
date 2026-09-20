@@ -244,8 +244,8 @@ class LessonsMixin:
             params.extend(status_filter)
 
         if author_filter:
-            conditions.append('author LIKE ?')
-            params.append(f'%{author_filter}%')
+            conditions.append('author = ?')
+            params.append(author_filter)
 
         if date_from:
             conditions.append('lesson_date >= ?')
@@ -319,6 +319,7 @@ class LessonsMixin:
 
     def search_transcripts(self, query: str, page_size: int = 500,
                            status_filter: Optional[List[str]] = None,
+                           author_filter: Optional[str] = None,
                            year_filter: Optional[int] = None,
                            month_filter: Optional[int] = None,
                            tag_ids: Optional[List[int]] = None) -> Tuple[List[Dict[str, Any]], int]:
@@ -340,6 +341,10 @@ class LessonsMixin:
             placeholders = ','.join('?' * len(status_filter))
             conditions.append(f'status IN ({placeholders})')
             params.extend(status_filter)
+
+        if author_filter:
+            conditions.append('author = ?')
+            params.append(author_filter)
 
         if year_filter:
             conditions.append('strftime("%Y", lesson_date) = ?')

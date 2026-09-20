@@ -4,7 +4,6 @@ Enhanced with streak display, daily goals, and smart suggestions.
 """
 
 import streamlit as st
-from datetime import datetime
 from .styles import apply_conservative_style
 from .callbacks import set_lesson, start_playlist
 from .components import (
@@ -146,57 +145,11 @@ def render_discovery(db) -> None:
 
     st.write("")
 
-    # SECTION 3: TIME TO REVIEW (Spaced Repetition)
-    spaced_suggestions = db.get_spaced_repetition_suggestions()
-    has_suggestions = any(lessons for lessons in spaced_suggestions.values())
-
-    if has_suggestions:
-        st.markdown('<div class="section-label">Time to Review</div>', unsafe_allow_html=True)
-
-        # Collect all lesson IDs for batch tag fetch
-        all_review_ids = []
-        for lessons in spaced_suggestions.values():
-            all_review_ids.extend([l['id'] for l in lessons[:4]])
-        review_tags_map = db.get_tags_for_lessons(all_review_ids) if all_review_ids else {}
-
-        interval_labels = {
-            '1_week': '1 Week Ago',
-            '1_month': '1 Month Ago',
-            '3_months': '3 Months Ago',
-            '6_months': '6 Months Ago',
-            '1_year': '1 Year Ago'
-        }
-
-        for interval_key, interval_label in interval_labels.items():
-            lessons = spaced_suggestions.get(interval_key, [])
-            if lessons:
-                st.caption(interval_label)
-                for lesson in lessons[:4]:  # Max 4 per interval (2 random + 2 tagged)
-                    lesson_id = lesson['id']
-                    completed_date = lesson.get('completed_at', '')
-                    if completed_date:
-                        try:
-                            date_obj = datetime.strptime(completed_date, '%Y-%m-%d %H:%M:%S.%f')
-                            date_str = date_obj.strftime('%b %d, %Y')
-                        except ValueError:
-                            try:
-                                date_obj = datetime.strptime(completed_date, '%Y-%m-%d %H:%M:%S')
-                                date_str = date_obj.strftime('%b %d, %Y')
-                            except ValueError:
-                                date_str = ''
-                    else:
-                        date_str = ''
-                    tags = review_tags_map.get(lesson_id, [])
-                    tags_str = ' · '.join([t['name'] for t in tags]) if tags else ''
-                    label = f"{lesson['title']}\n{lesson['author']}" + (f" • {date_str}" if date_str else "") + (f"\n{tags_str}" if tags_str else "")
-                    st.button(label, key=f"rev_{interval_key}_{lesson_id}", width='stretch',
-                             on_click=set_lesson, args=(lesson_id,))
-        st.write("")
-
-    # SECTION 4: RECENTLY COMPLETED
+    # SECTION 3: RECENTLY COMPLETED
     st.markdown('<div class="section-label">Recently Completed</div>', unsafe_allow_html=True)
 
-    completed_lessons, _ = db.get_paginated_lessons(page=1, page_size=5, status_filter=['Completed'])
+    # completed_at, rather than the lesson's original date, defines recency.
+    completed_lessons = db.get_recent_completions(limit=10)
 
     if completed_lessons:
         completed_ids = [l['id'] for l in completed_lessons]

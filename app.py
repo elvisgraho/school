@@ -45,6 +45,10 @@ def _init_session_state():
 
 _init_session_state()
 
+# An active finish-by date is recalculated on every app run.  This keeps the
+# target accurate after missed days or changes to the remaining lesson count.
+db.refresh_deadline_goal()
+
 # Handle forced rerun from callbacks (to properly dismiss video player)
 if st.session_state.get('_force_rerun'):
     st.session_state._force_rerun = False
