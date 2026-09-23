@@ -119,7 +119,7 @@ def _render_goals_settings(db) -> None:
         deadline_default = max(deadline_default, date.today() + timedelta(days=1))
 
         use_deadline = st.toggle(
-            "Finish all remaining lessons by a date",
+            "Finish by a date",
             value=deadline_enabled,
             key="settings_deadline_enabled",
             help="Locks the daily target and recalculates it from your remaining lessons and target date."
@@ -135,9 +135,18 @@ def _render_goals_settings(db) -> None:
 
         calculated_daily = current_daily
         if use_deadline:
+            remaining_lessons = db.get_remaining_lessons()
             calculated_daily = db.calculate_deadline_daily_goal(deadline_date)
-            st.caption(
-                f"{db.get_remaining_lessons():,} lessons remaining — {calculated_daily} lessons/day needed.")
+
+            if calculated_daily > 0:
+                days_remaining = (deadline_date - date.today()).days + 1
+                lessons_to_next_decrease = max(
+                    1,
+                    remaining_lessons - days_remaining * (calculated_daily - 1)
+                )
+                lesson_label = "lesson" if lessons_to_next_decrease == 1 else "lessons"
+                st.caption(
+                    f"{lessons_to_next_decrease:,} {lesson_label} to {calculated_daily - 1}/day.")
 
         new_daily = st.number_input(
             "Daily Goal (lessons/day)",
@@ -148,8 +157,6 @@ def _render_goals_settings(db) -> None:
             key="settings_daily_goal",
             disabled=use_deadline
         )
-
-        st.caption(f"Weekly target: {calculated_daily if use_deadline else new_daily} lessons/day × 7 = {(calculated_daily if use_deadline else new_daily) * 7} lessons/week")
 
         if st.button("Save Goals", width='stretch'):
             db.set_setting('deadline_goal_enabled', str(use_deadline).lower())
