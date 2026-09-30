@@ -244,14 +244,18 @@ class StreamlitApp:
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             creationflags = subprocess.CREATE_NO_WINDOW
 
-        self.process = subprocess.Popen(
-            cmd,
-            cwd=script_dir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            startupinfo=startupinfo,
-            creationflags=creationflags,
-        )
+        # Unread PIPEs eventually fill and block the server's logging thread.
+        # The child owns its log handle after Popen; close the parent's copy.
+        log_path = os.path.join(script_dir, "streamlit.log")
+        with open(log_path, "wb") as server_log:
+            self.process = subprocess.Popen(
+                cmd,
+                cwd=script_dir,
+                stdout=server_log,
+                stderr=subprocess.STDOUT,
+                startupinfo=startupinfo,
+                creationflags=creationflags,
+            )
 
         # Wait for server to be ready
         if not wait_for_server(self.port):
@@ -276,6 +280,9 @@ def main():
 
     try:
         url = app.start()
+
+        # Allow exports to open the native Save As dialog.
+        webview.settings['ALLOW_DOWNLOADS'] = True
 
         # Create native window
         window = webview.create_window(

@@ -14,7 +14,6 @@ def set_lesson(lesson_id):
 def clear_lesson():
     """Callback: Clear lesson ID state."""
     st.session_state.selected_lesson_id = None
-    st.session_state._force_rerun = True
 
 
 def update_status_callback(db, lesson_id, new_status):
@@ -123,7 +122,6 @@ def exit_playlist():
     st.session_state.playlist_index = 0
     st.session_state.playlist_shuffle = False
     st.session_state.selected_lesson_id = None
-    st.session_state._force_rerun = True
 
 
 def complete_and_next(db, lesson_id):

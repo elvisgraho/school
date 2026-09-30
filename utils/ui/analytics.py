@@ -17,6 +17,29 @@ from .components import (
 )
 
 
+def _format_record_date(value, precision="day"):
+    """Use lowercase English month names regardless of the machine locale."""
+    if not value:
+        return None
+    parsed = datetime.strptime(value, '%Y-%m' if precision == "month" else '%Y-%m-%d')
+    month = ("jan", "feb", "mar", "apr", "may", "jun",
+             "jul", "aug", "sep", "oct", "nov", "dec")[parsed.month - 1]
+    if precision == "month":
+        return f"{month} {parsed.year}"
+    return f"{parsed.day} {month} {parsed.year}"
+
+
+def _format_record_week(value):
+    """Expand SQLite's %Y-%W week key, including partial year-boundary weeks."""
+    if not value:
+        return None
+    year = int(value.split('-')[0])
+    monday = datetime.strptime(f"{value}-1", '%Y-%W-%w').date()
+    start = max(monday, datetime(year, 1, 1).date())
+    end = min(monday + timedelta(days=6), datetime(year, 12, 31).date())
+    return f"{_format_record_date(start.isoformat())} – {_format_record_date(end.isoformat())}"
+
+
 def _get_consistency_gap_stats(activity_data, today):
     """Summarize missed calendar days since the first recent completion."""
     window_start = today - timedelta(days=364)
@@ -441,7 +464,7 @@ def render_analytics(db) -> None:
         render_personal_record_card(
             "Most in a Day",
             day_rec.get('value', 0),
-            day_rec.get('date', '')
+            _format_record_date(day_rec.get('date'))
         )
 
     with r3:
@@ -449,7 +472,7 @@ def render_analytics(db) -> None:
         render_personal_record_card(
             "Most in a Week",
             week_rec.get('value', 0),
-            f"Week {week_rec.get('week', '')}" if week_rec.get('week') else None
+            _format_record_week(week_rec.get('week'))
         )
 
     with r4:
@@ -457,7 +480,7 @@ def render_analytics(db) -> None:
         render_personal_record_card(
             "Most in a Month",
             month_rec.get('value', 0),
-            month_rec.get('month', '')
+            _format_record_date(month_rec.get('month'), precision='month')
         )
 
     st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
@@ -468,7 +491,7 @@ def render_analytics(db) -> None:
         consistent = records.get('most_consistent', {})
         week_start = consistent.get('week_start')
         week_label = (
-            datetime.strptime(week_start, '%Y-%m-%d').strftime('%d %b %Y')
+            _format_record_date(week_start)
             if week_start else None
         )
         render_personal_record_card(
@@ -482,7 +505,7 @@ def render_analytics(db) -> None:
         render_personal_record_card(
             "Best 7-Day Run",
             rolling_week.get('value', 0),
-            rolling_week.get('end_date', '')
+            _format_record_date(rolling_week.get('end_date'))
         )
 
     with r7:
@@ -490,7 +513,7 @@ def render_analytics(db) -> None:
         render_personal_record_card(
             "Best 30-Day Run",
             rolling_month.get('value', 0),
-            rolling_month.get('end_date', '')
+            _format_record_date(rolling_month.get('end_date'))
         )
 
     st.markdown("---")
