@@ -7,6 +7,7 @@ import streamlit as st
 import os
 from datetime import date, timedelta
 from .metronome import render_metronome
+from ..local_server import LAN_CHILD, LocalServer, network_addresses
 
 # Try to import tkinter (not available in embedded Python)
 try:
@@ -62,12 +63,79 @@ def render_sidebar(db, sync_db_func) -> None:
         # Metronome
         render_metronome()
 
+        st.markdown("<hr style='margin: 10px 0; opacity: 0.2'>", unsafe_allow_html=True)
+
+        _render_local_server()
+
+
+@st.cache_resource
+def _get_local_server():
+    return LocalServer()
+
+
+@st.cache_data(ttl=30)
+def _get_network_addresses():
+    return network_addresses()
+
+
+def _change_local_server():
+    server = _get_local_server()
+    try:
+        if st.session_state.local_server_enabled:
+            server.start(address=st.session_state.get('local_server_address'))
+        else:
+            server.stop()
+        st.session_state.pop('local_server_error', None)
+    except Exception as error:
+        st.session_state.local_server_error = str(error)
+    st.session_state.local_server_enabled = server.running
+
+
+def _render_local_server():
+    st.markdown('**Home Network**')
+    if os.environ.get(LAN_CHILD):
+        st.caption('Connected to the local server. Progress is saved on the host PC.')
+        return
+    server = _get_local_server()
+    addresses = dict(_get_network_addresses())
+    if server.running:
+        addresses.setdefault(server.address, server.address)
+        st.session_state.local_server_address = server.address
+    elif st.session_state.get('local_server_address') not in addresses:
+        st.session_state.local_server_address = next(iter(addresses))
+    st.selectbox(
+        'Network adapter', options=list(addresses), key='local_server_address',
+        format_func=addresses.get, disabled=server.running,
+        help='Choose the Wi-Fi or Ethernet adapter connected to your home router. '
+             'Turn off the local server before changing adapters.',
+    )
+    st.session_state.local_server_enabled = server.running
+    st.toggle(
+        'Local server', key='local_server_enabled', on_change=_change_local_server,
+        help='Share videos and tasks with PCs on your home network. '
+             'On Windows, accept the administrator prompt for the temporary firewall rule.',
+    )
+    if server.running:
+        st.markdown(f'Open on another PC: [{server.url}]({server.url})')
+        st.caption('Keep this app open. Everyone on the allowed network can access your library and update progress.')
+    if os.name == 'nt':
+        st.info('Windows network profile required: set the active Ethernet or Wi-Fi '
+                'connection to **Private** in Settings → Network & internet → '
+                'Ethernet/Wi-Fi → Network profile type. Turning this off removes '
+                'the temporary firewall rule.')
+    if error := st.session_state.get('local_server_error'):
+        st.error(error)
+    if not server.running and server.firewall_requested:
+        if st.button('Retry firewall cleanup'):
+            _change_local_server()
+            st.rerun()
+
 
 def _render_library_sync(db, sync_db_func) -> None:
     """Render library location and sync controls."""
     st.markdown("**Library Location**")
 
-    if HAS_TKINTER:
+    if HAS_TKINTER and not os.environ.get(LAN_CHILD):
         # Use tkinter file dialog when available
         col_text, col_btn = st.columns([4, 1])
         with col_text:
