@@ -37,6 +37,10 @@ def _init_session_state():
         'playlist_ids': [],
         'playlist_index': 0,
         'playlist_shuffle': False,
+        # LAN sharing is deliberately transient: each application start begins
+        # with the local server off and no adapter preselected.
+        'local_server_enabled': False,
+        'local_server_address': None,
     }
     for key, default_value in defaults.items():
         if key not in st.session_state:

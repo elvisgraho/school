@@ -73,8 +73,9 @@ def _get_local_server():
     return LocalServer()
 
 
-@st.cache_data(ttl=30)
+@st.cache_resource
 def _get_network_addresses():
+    """Discover adapters once on first render and reuse until the app restarts."""
     return network_addresses()
 
 

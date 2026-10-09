@@ -42,7 +42,7 @@ def render_practice_room(db) -> None:
     playlist_index = st.session_state.get('playlist_index', 0)
     is_playlist_mode = len(playlist_ids) > 0
     playlist_total = len(playlist_ids)
-    playlist_position = playlist_index
+    playlist_position = playlist_index + 1
 
     # Header with playlist progress
     if is_playlist_mode:
@@ -70,6 +70,7 @@ def render_practice_room(db) -> None:
         st.error(f"Video file not found: {lesson.get('filename', 'Unknown')}")
         st.caption(f"Expected path: {video_path}")
         st.info("The file may have been moved or deleted. Try syncing your library again.")
+        st.button("Return to Library", on_click=clear_lesson, type="primary")
         return
 
     # Metadata and actions row

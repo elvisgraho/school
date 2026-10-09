@@ -8,12 +8,13 @@ import random
 
 def set_lesson(lesson_id):
     """Callback: Set lesson ID state."""
+    exit_playlist()
     st.session_state.selected_lesson_id = lesson_id
 
 
 def clear_lesson():
     """Callback: Clear lesson ID state."""
-    st.session_state.selected_lesson_id = None
+    exit_playlist()
 
 
 def update_status_callback(db, lesson_id, new_status):

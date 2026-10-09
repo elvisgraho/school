@@ -161,20 +161,21 @@ class StreaksMixin:
             row = conn.execute('''
                 SELECT COUNT(*) as count
                 FROM lessons
-                WHERE status = 'Completed' AND DATE(completed_at) = DATE('now')
-            ''').fetchone()
+                WHERE status = 'Completed' AND DATE(completed_at) = ?
+            ''', (date.today().isoformat(),)).fetchone()
             return row['count'] if row else 0
 
     def get_week_completions(self) -> int:
         """Get number of lessons completed this week (Mon-Sun)."""
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())
         with self._get_connection() as conn:
             row = conn.execute('''
                 SELECT COUNT(*) as count
                 FROM lessons
                 WHERE status = 'Completed'
-                AND DATE(completed_at) >= DATE('now', 'weekday 0', '-6 days')
-                AND DATE(completed_at) <= DATE('now')
-            ''').fetchone()
+                AND DATE(completed_at) BETWEEN ? AND ?
+            ''', (week_start.isoformat(), today.isoformat())).fetchone()
             return row['count'] if row else 0
 
     def get_daily_progress(self) -> Dict[str, Any]:
@@ -239,7 +240,7 @@ class StreaksMixin:
                 ''', (date_start, date_end)).fetchall()
                 
                 random_ids = [row['id'] for row in random_rows]
-                exclude_clause = f"AND id NOT IN ({','.join(['?'] * len(random_ids))})" if random_ids else ""
+                exclude_clause = f"AND l.id NOT IN ({','.join(['?'] * len(random_ids))})" if random_ids else ""
                 
                 # Get 2 additional random videos that have tags
                 tagged_rows = conn.execute(f'''

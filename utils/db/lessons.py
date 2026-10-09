@@ -56,7 +56,7 @@ class LessonsMixin:
     def sync_folder(self, folder_path: str, parse_func) -> Dict[str, Any]:
         """Sync lessons from folder using optimized two-phase diff engine.
         
-        Phase 1: Quick scan using file size + mtime (no hash computation)
+        Phase 1: Quick scan using mtime (no hash computation)
         Phase 2: Only compute hashes for new/changed files
         """
         stats = {'added': 0, 'updated': 0, 'archived': 0, 'errors': 0, 'unchanged': 0}
@@ -101,8 +101,6 @@ class LessonsMixin:
         if not file_metadata:
             return stats
 
-        current_filepaths = set()
-
         with self._get_connection() as conn:
             # Build lookup by filepath for quick comparison
             existing_by_path = {}
@@ -110,9 +108,10 @@ class LessonsMixin:
             for row in rows:
                 existing_by_path[row['filepath']] = dict(row)
 
-            to_insert = []
-            to_update = []
+            existing_by_hash = {row['file_hash']: dict(row) for row in rows}
             current_hashes = set()
+            # Prefer the saved path when duplicate copies of a video are present.
+            file_metadata.sort(key=lambda entry: entry[0] not in existing_by_path)
 
             for filepath, filename, size, mtime in file_metadata:
                 parsed = parse_func(filename)
@@ -120,107 +119,74 @@ class LessonsMixin:
                     stats['errors'] += 1
                     continue
 
-                current_filepaths.add(filepath)
                 existing = existing_by_path.get(filepath)
-
-                if existing:
-                    # File exists - check if it changed using mtime (fast, no hash needed)
-                    existing_mtime = existing.get('file_mtime', 0) or 0
-                    if existing_mtime == mtime:
-                        # Unchanged - skip hash computation entirely
-                        stats['unchanged'] += 1
-                        current_hashes.add(existing['file_hash'])
-                        continue
-
-                    # File changed - compute hash to determine if content actually changed
-                    file_hash = compute_file_hash(filepath)
-                    if not file_hash:
-                        stats['errors'] += 1
-                        continue
-
-                    current_hashes.add(file_hash)
-
-                    # Check if content actually changed (hash differs) or just mtime
-                    if file_hash == existing['file_hash']:
-                        # Same content, just mtime changed - update mtime only
-                        to_update.append({
-                            'id': existing['id'],
-                            'filename': filename,
-                            'filepath': filepath,
-                            'mtime': mtime,
-                            'transcript': existing.get('transcript')
-                        })
-                        stats['updated'] += 1
-                    else:
-                        # Content changed - treat as new file (old one will be archived if path differs)
-                        # Check for matching .srt file
-                        base_name = os.path.splitext(filename)[0]
-                        srt_path = os.path.join(folder_path, base_name + '.srt')
-                        transcript = None
-                        if os.path.isfile(srt_path):
-                            transcript = parse_srt_file(srt_path)
-                        
-                        to_insert.append({
-                            'file_hash': file_hash,
-                            'filepath': filepath,
-                            'filename': filename,
-                            'author': parsed['author'],
-                            'title': parsed['title'],
-                            'lesson_date': parsed['lesson_date'],
-                            'mtime': mtime,
-                            'transcript': transcript
-                        })
-                        stats['added'] += 1
+                if existing and (existing.get('file_mtime', 0) or 0) == mtime:
+                    file_hash = existing['file_hash']
                 else:
-                    # New file - need to compute hash
                     file_hash = compute_file_hash(filepath)
-                    if not file_hash:
-                        stats['errors'] += 1
+                if not file_hash:
+                    stats['errors'] += 1
+                    # A temporary read failure must not archive the known lesson.
+                    if existing:
+                        current_hashes.add(existing['file_hash'])
+                    continue
+
+                if file_hash in current_hashes:
+                    # The schema stores one lesson per content hash.
+                    stats['unchanged'] += 1
+                    continue
+                current_hashes.add(file_hash)
+                matching = existing_by_hash.get(file_hash)
+                srt_path = os.path.splitext(filepath)[0] + '.srt'
+                transcript = parse_srt_file(srt_path) if os.path.isfile(srt_path) else None
+
+                if matching:
+                    unchanged = (
+                        matching['filepath'] == filepath
+                        and matching['filename'] == filename
+                        and matching['file_mtime'] == mtime
+                        and matching['status'] != 'Archived'
+                        and (transcript is None or transcript == matching.get('transcript'))
+                    )
+                    if unchanged:
+                        stats['unchanged'] += 1
                         continue
-
-                    current_hashes.add(file_hash)
-
-                    # Check for matching .srt file
-                    base_name = os.path.splitext(filename)[0]
-                    srt_path = os.path.join(folder_path, base_name + '.srt')
-                    transcript = None
-                    if os.path.isfile(srt_path):
-                        transcript = parse_srt_file(srt_path)
-
-                    to_insert.append({
-                        'file_hash': file_hash,
-                        'filepath': filepath,
-                        'filename': filename,
-                        'author': parsed['author'],
-                        'title': parsed['title'],
-                        'lesson_date': parsed['lesson_date'],
-                        'mtime': mtime,
-                        'transcript': transcript
-                    })
+                    # Keep the lesson ID, completion date and tags when moved or renamed.
+                    conn.execute('''
+                        UPDATE lessons SET filename = ?, filepath = ?, author = ?, title = ?,
+                            lesson_date = ?, file_mtime = ?, transcript = COALESCE(?, transcript),
+                            status = CASE WHEN status = 'Archived' THEN
+                                CASE WHEN completed_at IS NOT NULL THEN 'Completed' ELSE 'New' END
+                                ELSE status END,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    ''', (filename, filepath, parsed['author'], parsed['title'],
+                          parsed['lesson_date'], mtime, transcript, matching['id']))
+                    stats['updated'] += 1
+                else:
+                    conn.execute('''
+                        INSERT INTO lessons (file_hash, filepath, filename, author, title,
+                                             lesson_date, file_mtime, status, transcript)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'New', ?)
+                    ''', (file_hash, filepath, filename, parsed['author'], parsed['title'],
+                          parsed['lesson_date'], mtime, transcript))
                     stats['added'] += 1
 
-            if to_insert:
-                conn.executemany('''
-                    INSERT INTO lessons (file_hash, filepath, filename, author, title, lesson_date, file_mtime, status, transcript)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'New', ?)
-                ''', [(r['file_hash'], r['filepath'], r['filename'], r['author'], r['title'], r['lesson_date'], r['mtime'], r['transcript'])
-                      for r in to_insert])
-
-            if to_update:
-                conn.executemany('''
-                    UPDATE lessons SET filename = ?, filepath = ?, file_mtime = ?, transcript = COALESCE(?, transcript), updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                ''', [(r['filename'], r['filepath'], r['mtime'], r['transcript'], r['id']) for r in to_update])
-
-            # Archive files that no longer exist in folder
-            if current_filepaths:
-                placeholders = ','.join('?' * len(current_filepaths))
-                archived = conn.execute(f'''
+            # Archive by content identity so a replaced file archives its old lesson.
+            # Avoid archiving anything after an incomplete scan or read failure.
+            if current_hashes and not stats['errors']:
+                conn.execute('CREATE TEMP TABLE synced_hashes (file_hash TEXT PRIMARY KEY)')
+                conn.executemany('INSERT INTO synced_hashes VALUES (?)',
+                                 [(file_hash,) for file_hash in current_hashes])
+                stats['archived'] = conn.execute('''
                     UPDATE lessons SET status = 'Archived', updated_at = CURRENT_TIMESTAMP
-                    WHERE filepath NOT IN ({placeholders}) AND status != 'Archived'
-                ''', tuple(current_filepaths)).rowcount
-                stats['archived'] = archived
+                    WHERE status != 'Archived'
+                      AND NOT EXISTS (SELECT 1 FROM synced_hashes
+                                      WHERE synced_hashes.file_hash = lessons.file_hash)
+                ''').rowcount
+                conn.execute('DROP TABLE synced_hashes')
 
+        self.invalidate_cache()
         return stats
 
     def get_paginated_lessons(self, page: int = 1, page_size: int = None, status_filter: Optional[List[str]] = None,

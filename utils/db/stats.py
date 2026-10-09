@@ -148,21 +148,23 @@ class StatsMixin:
             return result
 
     def get_monthly_comparison(self) -> Dict[str, Any]:
-        """Compare this month to last month."""
+        """Compare this month to last month using local calendar boundaries."""
+        month_start = datetime.now().date().replace(day=1)
+        previous_month = month_start - timedelta(days=1)
         with self._get_connection() as conn:
             current = conn.execute('''
                 SELECT COUNT(*) as count
                 FROM lessons
                 WHERE status = 'Completed'
-                AND strftime('%Y-%m', completed_at) = strftime('%Y-%m', 'now')
-            ''').fetchone()['count']
+                AND strftime('%Y-%m', completed_at) = ?
+            ''', (month_start.strftime('%Y-%m'),)).fetchone()['count']
 
             previous = conn.execute('''
                 SELECT COUNT(*) as count
                 FROM lessons
                 WHERE status = 'Completed'
-                AND strftime('%Y-%m', completed_at) = strftime('%Y-%m', 'now', '-1 month')
-            ''').fetchone()['count']
+                AND strftime('%Y-%m', completed_at) = ?
+            ''', (previous_month.strftime('%Y-%m'),)).fetchone()['count']
 
             if previous > 0:
                 change_percent = ((current - previous) / previous) * 100

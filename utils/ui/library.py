@@ -192,12 +192,12 @@ def render_library(db) -> None:
 
         # Count and shuffle toggle in last column
         with cols[col_idx]:
-            count_text = f"{len(df):,}" if len(df) < 500 else f"500/{total_count:,}"
+            count_text = f"{len(df):,}" if len(df) == total_count else f"{len(df):,}/{total_count:,}"
             st.checkbox("Shuffle", key='playlist_shuffle_option', help=f"{count_text} lessons")
     else:
         # Just show count
-        if len(df) >= 500:
-            st.caption(f"Showing 500 of {total_count:,} lessons")
+        if len(df) < total_count:
+            st.caption(f"Showing {len(df):,} of {total_count:,} lessons")
         else:
             st.caption(f"{len(df):,} lessons")
 
