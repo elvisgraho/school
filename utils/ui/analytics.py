@@ -522,15 +522,22 @@ def render_analytics(db) -> None:
     st.markdown('<div class="section-label">Browse by Date</div>', unsafe_allow_html=True)
 
     # Use session state value if set from heatmap click
-    default_date = st.session_state.pop('browse_by_date', today)
+    first_completion = db.get_first_completion_date()
+    today = datetime.now().date()
     first_activity_date = min(
-        (datetime.strptime(item['date'], '%Y-%m-%d').date() for item in activity_365),
-        default=today,
+        datetime.strptime(first_completion, '%Y-%m-%d').date() if first_completion else today,
+        today,
     )
+    clicked_date = st.session_state.pop('browse_by_date', None)
+    if clicked_date is not None:
+        st.session_state.analytics_browse_date = max(first_activity_date, min(clicked_date, today))
+    current_date = st.session_state.get('analytics_browse_date', today)
+    st.session_state.analytics_browse_date = max(first_activity_date, min(current_date, today))
     
     selected_date = st.date_input(
         "Select a date",
-        value=default_date,
+        value=None,
+        key='analytics_browse_date',
         min_value=first_activity_date,
         max_value=today,
         format="DD/MM/YYYY",
@@ -596,10 +603,9 @@ def render_analytics(db) -> None:
 
     col_exp1, col_exp2 = st.columns([1, 3])
     with col_exp1:
-        json_data = db.export_statistics_json()
         st.download_button(
             label="Export Statistics (JSON)",
-            data=json_data,
+            data=db.export_statistics_json,
             file_name=f"video_shed_stats_{datetime.now().strftime('%Y%m%d')}.json",
             mime="application/json",
             key="download_json",

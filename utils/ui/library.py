@@ -7,8 +7,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from .styles import apply_conservative_style
-from .callbacks import set_lesson, bulk_add_tag_callback, bulk_untag_and_delete_callback, start_playlist
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
+from .callbacks import set_lesson, bulk_add_filtered_tag_callback, bulk_untag_and_delete_callback, start_filtered_playlist
+from st_aggrid import AgGrid, GridOptionsBuilder, DataReturnMode, JsCode
 
 # Page size for AgGrid - balance between performance and usability
 GRID_PAGE_SIZE = 100
@@ -87,29 +87,12 @@ def render_library(db) -> None:
     m_filter = month_options.index(selected_month) if selected_month != 'All' else None
     author_filter = selected_author if selected_author != 'All' else None
 
-    # Fetch data - use transcript search if active, otherwise regular search
-    if is_transcript_search:
-        lessons, total_count = db.search_transcripts(
-            query=transcript_search.strip(),
-            page_size=500,
-            status_filter=s_filter,
-            author_filter=author_filter,
-            year_filter=y_filter,
-            month_filter=m_filter,
-            tag_ids=selected_tag_ids
-        )
-    else:
-        lessons, total_count = db.get_paginated_lessons(
-            page=1,
-            page_size=1000,  # Increased limit for better search results
-            status_filter=s_filter,
-            author_filter=author_filter,
-            search_query=search if search else None,
-            year_filter=y_filter,
-            month_filter=m_filter,
-            tag_ids=selected_tag_ids
-        )
-    
+    filters = dict(status_filter=s_filter, author_filter=author_filter,
+                   search_query=search.strip() or None, year_filter=y_filter,
+                   month_filter=m_filter, tag_ids=selected_tag_ids,
+                   transcript_query=transcript_search.strip() or None)
+    lessons, total_count = db.get_library_lessons(**filters)
+
     if not lessons:
         st.info("No lessons found matching criteria.")
         return
@@ -134,7 +117,7 @@ def render_library(db) -> None:
     actions = []
 
     # Playlist action (always show if multiple results)
-    if len(lessons) > 1:
+    if total_count > 1:
         actions.append('playlist')
 
     # Bulk tag action (when searching)
@@ -154,9 +137,9 @@ def render_library(db) -> None:
         if 'playlist' in actions:
             with cols[col_idx]:
                 shuffle = st.session_state.get('playlist_shuffle_option', False)
-                btn_text = f"Shuffle ({len(lessons)})" if shuffle else f"Play All ({len(lessons)})"
+                btn_text = f"Shuffle ({total_count})" if shuffle else f"Play All ({total_count})"
                 st.button(btn_text, key='start_playlist_btn', type='primary',
-                          on_click=start_playlist, args=(lesson_ids, shuffle))
+                          on_click=start_filtered_playlist, args=(db, filters, shuffle))
             col_idx += 1
 
         # Bulk tag button
@@ -166,7 +149,9 @@ def render_library(db) -> None:
             if bulk_success:
                 tagged_ids = bulk_success.get('lesson_ids', set())
                 current_ids = set(lesson_ids)
-                if bulk_success.get('tag') != tag_term or not current_ids.issubset(tagged_ids):
+                if (bulk_success.get('tag') != tag_term
+                        or bulk_success.get('count') != total_count
+                        or not current_ids.issubset(tagged_ids)):
                     st.session_state.bulk_tag_success = None
                     bulk_success = None
             with cols[col_idx]:
@@ -174,7 +159,7 @@ def render_library(db) -> None:
                     st.button(f"Tagged as \"{tag_term}\"", key='bulk_tag_btn', disabled=True)
                 else:
                     st.button(f"Tag as \"{tag_term}\"", key='bulk_tag_btn',
-                              on_click=bulk_add_tag_callback, args=(db, lesson_ids, tag_term))
+                              on_click=bulk_add_filtered_tag_callback, args=(db, filters, tag_term))
             col_idx += 1
 
         # Bulk untag button
@@ -228,6 +213,7 @@ def render_library(db) -> None:
     gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=GRID_PAGE_SIZE)
     gb.configure_grid_options(
         rowBuffer=20,  # Buffer for smooth scrolling
+        autoSizeStrategy={'type': 'fitGridWidth'},
         suppressRowClickSelection=False,
         enableCellTextSelection=True,
     )
@@ -268,13 +254,12 @@ def render_library(db) -> None:
     response = AgGrid(
         grid_data,
         gridOptions=grid_options,
-        update_mode=GridUpdateMode.MODEL_CHANGED,
+        update_on=['selectionChanged', 'filterChanged', 'sortChanged', 'cellValueChanged'],
         data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
         allow_unsafe_jscode=True,
         height=600,
         width='100%',
-        fit_columns_on_grid_load=True,
-        key="library_grid",
+        key='library_grid',
         theme='streamlit',
         custom_css=custom_css
     )
@@ -288,6 +273,8 @@ def render_library(db) -> None:
             else:
                 lesson_id = int(selected_rows[0]['id'])
 
+            if lesson_id not in lesson_ids:
+                return
             set_lesson(lesson_id)
             st.rerun()
         except (KeyError, IndexError, TypeError, ValueError):

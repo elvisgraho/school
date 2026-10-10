@@ -12,7 +12,7 @@ def render_metronome() -> None:
 
     bpm_val = st.session_state.get('metronome_bpm', 120)
 
-    st.components.v1.html(f"""
+    st.iframe(f"""
     <style>
         body {{ background: #1a1a1a; color: #ccc; font-family: sans-serif; margin: 0; padding: 5px; }}
         .met-container {{ border: 1px solid #333; padding: 10px; border-radius: 4px; background: #222; }}

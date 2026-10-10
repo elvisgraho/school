@@ -217,11 +217,20 @@ def _render_goals_settings(db) -> None:
                 st.caption(
                     f"{lessons_to_next_decrease:,} {lesson_label} to {calculated_daily - 1}/day.")
 
+        # Keyed widgets keep their previous value when the default changes.
+        # Explicitly refresh a locked target, and restore a valid manual goal
+        # when a completed library's zero target is unlocked.
+        if use_deadline:
+            st.session_state.settings_daily_goal = calculated_daily
+        else:
+            st.session_state.settings_daily_goal = max(
+                1, st.session_state.get('settings_daily_goal', current_daily) or current_daily)
+
         new_daily = st.number_input(
             "Daily Goal (lessons/day)",
             min_value=0 if use_deadline else 1,
-            max_value=max(20, calculated_daily),
-            value=calculated_daily if use_deadline else current_daily,
+            max_value=max(20, calculated_daily, st.session_state.settings_daily_goal),
+            value=None,
             step=1,
             key="settings_daily_goal",
             disabled=use_deadline

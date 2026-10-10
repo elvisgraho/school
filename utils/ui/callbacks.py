@@ -43,14 +43,21 @@ def bulk_add_tag_callback(db, lesson_ids, tag_name):
         return
     tag_id = db.get_or_create_tag(tag_name.strip())
     if tag_id:
-        for lesson_id in lesson_ids:
-            db.add_tag_to_lesson(lesson_id, tag_id)
+        db.add_tag_to_lessons(lesson_ids, tag_id)
         # Track successful bulk tag for UI feedback
         st.session_state.bulk_tag_success = {
             'tag': tag_name.strip(),
             'count': len(lesson_ids),
             'lesson_ids': set(lesson_ids)
         }
+
+
+def bulk_add_filtered_tag_callback(db, filters, tag_name):
+    bulk_add_tag_callback(db, db.get_matching_lesson_ids(**filters), tag_name)
+
+
+def start_filtered_playlist(db, filters, shuffle=False):
+    start_playlist(db.get_matching_lesson_ids(**filters), shuffle)
 
 
 def bulk_untag_and_delete_callback(db, tag_id, tag_name):

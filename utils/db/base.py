@@ -11,6 +11,16 @@ import threading
 DB_FILE = 'progress.db'
 
 
+class ClosingConnection(sqlite3.Connection):
+    """Commit or roll back a transaction, then always release the file handle."""
+
+    def __exit__(self, *args):
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 class DatabaseBase:
     """Base class with connection management and caching."""
 
@@ -60,7 +70,7 @@ class DatabaseBase:
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get a database connection with row factory."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.execute('PRAGMA foreign_keys = ON')
         return conn
@@ -84,6 +94,55 @@ class DatabaseBase:
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     transcript TEXT
                 )
+            ''')
+
+            # Add metadata without replacing existing lessons, IDs, or tags.
+            columns = {row['name'] for row in conn.execute('PRAGMA table_info(lessons)')}
+            for name, declaration in {
+                'file_size': 'INTEGER', 'file_mtime_ns': 'INTEGER',
+                'transcript_size': 'INTEGER', 'transcript_mtime_ns': 'INTEGER',
+                'file_mtime': 'REAL DEFAULT 0', 'transcript': 'TEXT',
+                'status_before_archive': 'TEXT',
+            }.items():
+                if name not in columns:
+                    conn.execute(f'ALTER TABLE lessons ADD COLUMN {name} {declaration}')
+
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS completion_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lesson_id INTEGER NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+                    completed_at TEXT NOT NULL,
+                    UNIQUE(lesson_id, completed_at)
+                )
+            ''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_completion_date ON completion_events(completed_at)')
+            conn.execute('''
+                INSERT OR IGNORE INTO completion_events (lesson_id, completed_at)
+                SELECT id, completed_at FROM lessons WHERE completed_at IS NOT NULL
+            ''')
+            conn.execute('''
+                CREATE TRIGGER IF NOT EXISTS record_insert_completion
+                AFTER INSERT ON lessons WHEN NEW.completed_at IS NOT NULL
+                BEGIN
+                    INSERT OR IGNORE INTO completion_events (lesson_id, completed_at)
+                    VALUES (NEW.id, NEW.completed_at);
+                END
+            ''')
+            conn.execute('''
+                CREATE TRIGGER IF NOT EXISTS record_update_completion
+                AFTER UPDATE OF status, completed_at ON lessons
+                WHEN NEW.status = 'Completed' AND NEW.completed_at IS NOT NULL
+                  AND (OLD.status != 'Completed' OR OLD.completed_at IS NOT NEW.completed_at)
+                BEGIN
+                    INSERT OR IGNORE INTO completion_events (lesson_id, completed_at)
+                    VALUES (NEW.id, NEW.completed_at);
+                END
+            ''')
+            conn.execute('''
+                CREATE VIEW IF NOT EXISTS completion_activity AS
+                SELECT l.id, l.title, l.author, l.lesson_date, e.completed_at,
+                       'Completed' AS status
+                FROM completion_events e JOIN lessons l ON l.id = e.lesson_id
             ''')
 
             conn.execute('''

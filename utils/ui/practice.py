@@ -6,6 +6,7 @@ Optimized for smooth playback and responsive controls.
 import streamlit as st
 import os
 import urllib.parse
+from ..video_server import video_url
 from .callbacks import (
     clear_lesson, update_status_callback, add_tag_callback, remove_tag_callback,
     exit_playlist, playlist_next, playlist_prev, complete_and_next
@@ -61,11 +62,14 @@ def render_practice_room(db) -> None:
     # Video Player
     video_path = lesson.get('filepath', '')
     if video_path and os.path.exists(video_path):
-        st.markdown(
-            '<style>video[data-testid="stVideo"] { max-height: 70vh; }</style>',
-            unsafe_allow_html=True,
+        # Keep the player in the page so it follows the available width and
+        # viewport height, without a fixed-size iframe or nested scrollbar.
+        st.html(
+            f'<video controls preload="metadata" aria-label="Lesson video player" '
+            f'style="display:block; width:100%; height:auto; max-height:70vh; '
+            f'aspect-ratio:auto 16 / 9; object-fit:contain; background:#000;" '
+            f'src="{video_url(lesson_id)}"></video>',
         )
-        st.video(video_path)
     else:
         st.error(f"Video file not found: {lesson.get('filename', 'Unknown')}")
         st.caption(f"Expected path: {video_path}")

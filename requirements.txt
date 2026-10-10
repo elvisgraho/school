@@ -1,19 +1,23 @@
 # Video School - Dependencies
 # Install with: pip install -r requirements.txt
 
+# Tested direct dependencies; Python 3.11+
+# PyArrow 25 is the newest release supported by Streamlit 1.65.
+
 # Web framework
-streamlit>=1.28.0
+streamlit==1.65.0
+starlette==1.7.0
 
 # Data handling
-pandas>=2.0.0
-altair>=5.0.0
+pandas==3.0.6
+altair==6.3.0
 
 # Interactive grid
-streamlit-aggrid>=0.3.4
+streamlit-aggrid==1.2.1.post2
 
 # Native window (for portable build)
-pywebview>=4.0.0
+pywebview==6.2.1
 
 # Performance
-pyarrow>=14.0.0
-watchdog>=3.0.0
+pyarrow==25.0.1
+watchdog==6.0.0

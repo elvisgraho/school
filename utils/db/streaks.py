@@ -12,11 +12,7 @@ class StreaksMixin:
 
     def get_current_streak(self) -> int:
         """Calculate current streak."""
-        activity = self.get_activity_data(days=365)
-        if not activity:
-            return 0
-
-        dates = sorted([datetime.strptime(row['date'], '%Y-%m-%d').date() for row in activity], reverse=True)
+        dates = sorted(self.get_completion_dates(), reverse=True)
         if not dates:
             return 0
 
@@ -83,15 +79,7 @@ class StreaksMixin:
 
     def _get_longest_streak(self, exclude_current: bool = False) -> int:
         """Return the longest completion streak, optionally excluding today’s run."""
-        with self._get_connection() as conn:
-            rows = conn.execute('''
-                SELECT DISTINCT DATE(completed_at) AS date
-                FROM lessons
-                WHERE status = 'Completed' AND completed_at IS NOT NULL
-                ORDER BY date
-            ''').fetchall()
-
-        dates = [datetime.strptime(row['date'], '%Y-%m-%d').date() for row in rows]
+        dates = self.get_completion_dates()
         if exclude_current and dates:
             current = self.get_current_streak()
             if current:
@@ -160,7 +148,7 @@ class StreaksMixin:
         with self._get_connection() as conn:
             row = conn.execute('''
                 SELECT COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed' AND DATE(completed_at) = ?
             ''', (date.today().isoformat(),)).fetchone()
             return row['count'] if row else 0
@@ -172,7 +160,7 @@ class StreaksMixin:
         with self._get_connection() as conn:
             row = conn.execute('''
                 SELECT COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed'
                 AND DATE(completed_at) BETWEEN ? AND ?
             ''', (week_start.isoformat(), today.isoformat())).fetchone()

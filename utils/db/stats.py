@@ -43,7 +43,7 @@ class StatsMixin:
         with self._get_connection() as conn:
             rows = conn.execute('''
                 SELECT DATE(completed_at) as date, COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed' AND DATE(completed_at) >= DATE('now', 'localtime', ?)
                 GROUP BY DATE(completed_at)
             ''', (f'-{days} days',)).fetchall()
@@ -54,7 +54,7 @@ class StatsMixin:
         with self._get_connection() as conn:
             rows = conn.execute('''
                 SELECT strftime('%Y-%m', completed_at) as month, COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed' AND DATE(completed_at) >= DATE('now', 'localtime', ?)
                 GROUP BY strftime('%Y-%m', completed_at)
                 ORDER BY month DESC
@@ -96,10 +96,10 @@ class StatsMixin:
         """Get the most recently completed lessons."""
         with self._get_connection() as conn:
             rows = conn.execute('''
-                SELECT id, title, author, completed_at
-                FROM lessons
+                SELECT id, title, author, MAX(completed_at) AS completed_at
+                FROM completion_activity
                 WHERE status = 'Completed'
-                ORDER BY completed_at DESC
+                GROUP BY id ORDER BY completed_at DESC
                 LIMIT ?
             ''', (limit,)).fetchall()
             return [dict(row) for row in rows]
@@ -109,7 +109,7 @@ class StatsMixin:
         with self._get_connection() as conn:
             rows = conn.execute('''
                 SELECT strftime('%w', completed_at) as dow, COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed'
                 GROUP BY dow
             ''').fetchall()
@@ -125,11 +125,11 @@ class StatsMixin:
         """Get backlog trend data."""
         with self._get_connection() as conn:
             rows = conn.execute('''
-                SELECT DATE(completed_at) as date,
-                       COUNT(*) as completed_on_date
-                FROM lessons
-                WHERE status = 'Completed'
-                GROUP BY DATE(completed_at)
+                SELECT date, COUNT(*) AS completed_on_date FROM (
+                    SELECT DATE(MIN(e.completed_at)) AS date
+                    FROM completion_events e JOIN lessons l ON l.id=e.lesson_id
+                    WHERE l.status != 'Archived' GROUP BY e.lesson_id
+                ) GROUP BY date
                 ORDER BY date ASC
             ''').fetchall()
 
@@ -154,14 +154,14 @@ class StatsMixin:
         with self._get_connection() as conn:
             current = conn.execute('''
                 SELECT COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed'
                 AND strftime('%Y-%m', completed_at) = ?
             ''', (month_start.strftime('%Y-%m'),)).fetchone()['count']
 
             previous = conn.execute('''
                 SELECT COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed'
                 AND strftime('%Y-%m', completed_at) = ?
             ''', (previous_month.strftime('%Y-%m'),)).fetchone()['count']
@@ -183,7 +183,7 @@ class StatsMixin:
         with self._get_connection() as conn:
             rows = conn.execute('''
                 SELECT DATE(completed_at) as date, COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed'
                 AND DATE(completed_at) >= DATE('now', 'localtime', '-6 days')
                 GROUP BY DATE(completed_at)
@@ -210,10 +210,10 @@ class StatsMixin:
         """Get all lessons completed on a specific date."""
         with self._get_connection() as conn:
             rows = conn.execute('''
-                SELECT id, title, author, completed_at
-                FROM lessons
+                SELECT id, title, author, MAX(completed_at) AS completed_at
+                FROM completion_activity
                 WHERE status = 'Completed' AND DATE(completed_at) = ?
-                ORDER BY completed_at DESC
+                GROUP BY id ORDER BY completed_at DESC
             ''', (date_str,)).fetchall()
             return [dict(row) for row in rows]
 
@@ -222,7 +222,7 @@ class StatsMixin:
         with self._get_connection() as conn:
             rows = conn.execute('''
                 SELECT DISTINCT CAST(strftime('%Y', completed_at) AS INTEGER) as year
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed' AND completed_at IS NOT NULL
                 ORDER BY year DESC
             ''').fetchall()
@@ -234,9 +234,25 @@ class StatsMixin:
             rows = conn.execute('''
                 SELECT DATE(completed_at) as date, COUNT(*) as count,
                        GROUP_CONCAT(title, ', ') as titles
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed'
                 AND strftime('%Y', completed_at) = ?
                 GROUP BY DATE(completed_at)
             ''', (str(year),)).fetchall()
             return [dict(row) for row in rows]
+
+    def get_first_completion_date(self):
+        """Earliest historical completion, including repeat and archived lessons."""
+        with self._get_connection() as conn:
+            return conn.execute('SELECT MIN(DATE(completed_at)) FROM completion_events').fetchone()[0]
+
+    def get_completion_dates(self):
+        """Share the calendar-day history between current and best streaks."""
+        cached = self._get_cache('completion_dates')
+        if cached is not None:
+            return cached
+        with self._get_connection() as conn:
+            dates = [datetime.strptime(row[0], '%Y-%m-%d').date() for row in conn.execute(
+                'SELECT DISTINCT DATE(completed_at) FROM completion_events ORDER BY 1')]
+        self._set_cache('completion_dates', dates)
+        return dates

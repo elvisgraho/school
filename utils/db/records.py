@@ -11,6 +11,10 @@ class RecordsMixin:
 
     def get_personal_records(self) -> Dict[str, Any]:
         """Get all personal records from database."""
+        cache_key = 'personal_records'
+        cached = self._get_cache(cache_key)
+        if cached is not None:
+            return cached
         with self._get_connection() as conn:
             rows = conn.execute('''
                 SELECT record_type, value, achieved_date, details
@@ -24,10 +28,14 @@ class RecordsMixin:
                     'achieved_date': row['achieved_date'],
                     'details': row['details']
                 }
+            self._set_cache(cache_key, records)
             return records
 
     def _save_personal_record(self, record_type: str, value: int, achieved_date: str = None, details: str = None) -> bool:
         """Save a personal record only when its value is strictly higher."""
+        saved = self.get_personal_records().get(record_type)
+        if saved and saved['value'] >= value:
+            return False
         with self._get_connection() as conn:
             cursor = conn.execute('''
                 INSERT INTO personal_records (record_type, value, achieved_date, details, updated_at)
@@ -36,6 +44,7 @@ class RecordsMixin:
                     value = ?, achieved_date = ?, details = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE excluded.value > personal_records.value
             ''', (record_type, value, achieved_date, details, value, achieved_date, details))
+            self._cache.pop('personal_records', None)
             return cursor.rowcount > 0
 
     def get_most_lessons_in_day(self) -> Dict[str, Any]:
@@ -43,7 +52,7 @@ class RecordsMixin:
         with self._get_connection() as conn:
             row = conn.execute('''
                 SELECT DATE(completed_at) as date, COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed' AND completed_at IS NOT NULL
                 GROUP BY DATE(completed_at)
                 ORDER BY count DESC, date ASC
@@ -59,7 +68,7 @@ class RecordsMixin:
         with self._get_connection() as conn:
             row = conn.execute('''
                 SELECT strftime('%Y-%W', completed_at) as week, COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed' AND completed_at IS NOT NULL
                 GROUP BY week
                 ORDER BY count DESC, week ASC
@@ -75,7 +84,7 @@ class RecordsMixin:
         with self._get_connection() as conn:
             row = conn.execute('''
                 SELECT strftime('%Y-%m', completed_at) as month, COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed' AND completed_at IS NOT NULL
                 GROUP BY month
                 ORDER BY count DESC, month ASC
@@ -92,7 +101,7 @@ class RecordsMixin:
             rows = conn.execute('''
                 SELECT DATE(completed_at) as date,
                        COUNT(*) as count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed' AND completed_at IS NOT NULL
                 GROUP BY date
                 ORDER BY date
@@ -141,7 +150,7 @@ class RecordsMixin:
         with self._get_connection() as conn:
             rows = conn.execute('''
                 SELECT DATE(completed_at) AS date, COUNT(*) AS count
-                FROM lessons
+                FROM completion_activity
                 WHERE status = 'Completed' AND completed_at IS NOT NULL
                 GROUP BY date
                 ORDER BY date
@@ -168,6 +177,10 @@ class RecordsMixin:
 
     def compute_and_update_records(self) -> Dict[str, Any]:
         """Recompute all personal records and save to database."""
+        cache_key = 'computed_records'
+        cached = self._get_cache(cache_key)
+        if cached is not None:
+            return cached
         records = {}
 
         best_streak = self.get_best_streak()
@@ -204,4 +217,5 @@ class RecordsMixin:
                                    details=rolling_month['start_date'])
         records['best_rolling_30'] = rolling_month
 
+        self._set_cache(cache_key, records)
         return records

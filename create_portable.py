@@ -158,7 +158,7 @@ def create_portable_distribution():
     app_folder.mkdir(exist_ok=True)
 
     # Copy Python files
-    files_to_copy = ['app.py']
+    files_to_copy = ['app.py', 'ui_app.py']
     for f in files_to_copy:
         src = project_root / f
         if src.exists():

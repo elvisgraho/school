@@ -54,364 +54,257 @@ class LessonsMixin:
     """Mixin for lesson-related database operations."""
 
     def sync_folder(self, folder_path: str, parse_func) -> Dict[str, Any]:
-        """Sync lessons from folder using optimized two-phase diff engine.
-        
-        Phase 1: Quick scan using mtime (no hash computation)
-        Phase 2: Only compute hashes for new/changed files
-        """
+        """Sync full content identities; only reread changed video/subtitle files."""
         stats = {'added': 0, 'updated': 0, 'archived': 0, 'errors': 0, 'unchanged': 0}
-
         if not os.path.isdir(folder_path):
-            return stats
-
-        def compute_file_hash(filepath: str) -> Optional[str]:
-            """Compute MD5 hash of file content (first + last 8KB)."""
-            try:
-                hash_obj = hashlib.md5()
-                with open(filepath, 'rb') as f:
-                    data = f.read(8192)
-                    hash_obj.update(data)
-                    f.seek(0, 2)
-                    size = f.tell()
-                    if size > 8192:
-                        f.seek(-8192, 2)
-                        data = f.read(8192)
-                        hash_obj.update(data)
-                return hash_obj.hexdigest()
-            except (OSError, IOError):
-                return None
-
-        # Phase 1: Quick scan - collect file metadata without computing hashes
-        file_metadata = []  # (filepath, filename, size, mtime)
-
-        try:
-            with os.scandir(folder_path) as entries:
-                for entry in entries:
-                    if entry.is_file() and entry.name.lower().endswith('.mp4'):
-                        try:
-                            stat_info = entry.stat()
-                            filepath = os.path.normpath(os.path.join(folder_path, entry.name))
-                            file_metadata.append((filepath, entry.name, stat_info.st_size, stat_info.st_mtime))
-                        except (OSError, IOError):
-                            stats['errors'] += 1
-        except OSError:
             stats['errors'] = 1
             return stats
 
-        if not file_metadata:
+        metadata = []
+        try:
+            with os.scandir(folder_path) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_file() and entry.name.lower().endswith('.mp4'):
+                            metadata.append((os.path.abspath(entry.path), entry.name, entry.stat()))
+                    except OSError:
+                        stats['errors'] += 1
+        except OSError:
+            stats['errors'] += 1
             return stats
 
         with self._get_connection() as conn:
-            # Build lookup by filepath for quick comparison
-            existing_by_path = {}
-            rows = conn.execute('SELECT id, file_hash, filepath, filename, status, file_mtime, transcript FROM lessons').fetchall()
-            for row in rows:
-                existing_by_path[row['filepath']] = dict(row)
-
-            existing_by_hash = {row['file_hash']: dict(row) for row in rows}
+            # Never materialize the library's large transcript bodies during sync.
+            rows = conn.execute("""
+                SELECT id, file_hash, filepath, filename, status, file_mtime_ns,
+                       file_size, transcript_mtime_ns, transcript_size
+                FROM lessons
+            """).fetchall()
+            by_path = {os.path.abspath(row['filepath']): dict(row) for row in rows}
+            by_hash = {row['file_hash']: dict(row) for row in rows}
             current_hashes = set()
-            # Prefer the saved path when duplicate copies of a video are present.
-            file_metadata.sort(key=lambda entry: entry[0] not in existing_by_path)
+            metadata.sort(key=lambda item: item[0] not in by_path)
 
-            for filepath, filename, size, mtime in file_metadata:
+            for filepath, filename, video_stat in metadata:
                 parsed = parse_func(filename)
                 if not parsed:
                     stats['errors'] += 1
                     continue
-
-                existing = existing_by_path.get(filepath)
-                if existing and (existing.get('file_mtime', 0) or 0) == mtime:
-                    file_hash = existing['file_hash']
-                else:
-                    file_hash = compute_file_hash(filepath)
-                if not file_hash:
+                existing = by_path.get(filepath)
+                legacy_hash = None
+                try:
+                    if (existing and existing['file_hash'].startswith('sha256:')
+                            and existing['file_size'] == video_stat.st_size
+                            and existing['file_mtime_ns'] == video_stat.st_mtime_ns):
+                        file_hash = existing['file_hash']
+                    else:
+                        digest = hashlib.sha256()
+                        with open(filepath, 'rb') as video:
+                            # Legacy fingerprint is used only to migrate an old row.
+                            first = video.read(8192)
+                            old_digest = hashlib.md5(first)
+                            if video_stat.st_size > 8192:
+                                video.seek(-8192, 2)
+                                old_digest.update(video.read(8192))
+                            legacy_hash = old_digest.hexdigest()
+                            video.seek(0)
+                            for chunk in iter(lambda: video.read(1024 * 1024), b''):
+                                digest.update(chunk)
+                        file_hash = 'sha256:' + digest.hexdigest()
+                        after = os.stat(filepath)
+                        if (after.st_size, after.st_mtime_ns) != (video_stat.st_size, video_stat.st_mtime_ns):
+                            raise OSError('Video changed during sync')
+                except OSError:
                     stats['errors'] += 1
-                    # A temporary read failure must not archive the known lesson.
-                    if existing:
-                        current_hashes.add(existing['file_hash'])
                     continue
 
                 if file_hash in current_hashes:
-                    # The schema stores one lesson per content hash.
                     stats['unchanged'] += 1
                     continue
                 current_hashes.add(file_hash)
-                matching = existing_by_hash.get(file_hash)
-                srt_path = os.path.splitext(filepath)[0] + '.srt'
-                transcript = parse_srt_file(srt_path) if os.path.isfile(srt_path) else None
+                matching = by_hash.get(file_hash)
+                if matching is None and legacy_hash:
+                    legacy = by_hash.get(legacy_hash)
+                    # Preserve progress for an existing path or a moved legacy file.
+                    # Do not steal another still-present video's legacy identity.
+                    if legacy and (os.path.abspath(legacy['filepath']) == filepath
+                                   or not os.path.isfile(legacy['filepath'])):
+                        matching = legacy
 
-                if matching:
-                    unchanged = (
-                        matching['filepath'] == filepath
-                        and matching['filename'] == filename
-                        and matching['file_mtime'] == mtime
-                        and matching['status'] != 'Archived'
-                        and (transcript is None or transcript == matching.get('transcript'))
-                    )
-                    if unchanged:
-                        stats['unchanged'] += 1
+                srt_path = os.path.splitext(filepath)[0] + '.srt'
+                try:
+                    srt_stat = os.stat(srt_path)
+                    srt_metadata = (srt_stat.st_size, srt_stat.st_mtime_ns)
+                except FileNotFoundError:
+                    srt_metadata = (-1, -1)
+                except OSError:
+                    stats['errors'] += 1
+                    continue
+                subtitle_changed = (not matching or srt_metadata !=
+                                    (matching['transcript_size'], matching['transcript_mtime_ns']))
+                transcript = None
+                if subtitle_changed and srt_metadata != (-1, -1):
+                    transcript = parse_srt_file(srt_path)
+                    if transcript is None and srt_stat.st_size:
+                        # Empty, valid subtitles are allowed; unreadable files retry.
+                        try:
+                            with open(srt_path, 'rb'):
+                                pass
+                        except OSError:
+                            stats['errors'] += 1
+                            continue
+                    try:
+                        after = os.stat(srt_path)
+                    except OSError:
+                        stats['errors'] += 1
                         continue
-                    # Keep the lesson ID, completion date and tags when moved or renamed.
-                    conn.execute('''
-                        UPDATE lessons SET filename = ?, filepath = ?, author = ?, title = ?,
-                            lesson_date = ?, file_mtime = ?, transcript = COALESCE(?, transcript),
-                            status = CASE WHEN status = 'Archived' THEN
-                                CASE WHEN completed_at IS NOT NULL THEN 'Completed' ELSE 'New' END
+                    if (after.st_size, after.st_mtime_ns) != srt_metadata:
+                        stats['errors'] += 1
+                        continue
+
+                unchanged = (matching and matching['filepath'] == filepath
+                             and matching['filename'] == filename
+                             and matching['file_hash'] == file_hash
+                             and matching['file_size'] == video_stat.st_size
+                             and matching['file_mtime_ns'] == video_stat.st_mtime_ns
+                             and matching['status'] != 'Archived' and not subtitle_changed)
+                if unchanged:
+                    stats['unchanged'] += 1
+                    continue
+                values = (file_hash, filepath, filename, parsed['author'], parsed['title'],
+                          parsed['lesson_date'].isoformat(), video_stat.st_mtime,
+                          video_stat.st_size, video_stat.st_mtime_ns, *srt_metadata)
+                if matching:
+                    conn.execute("""
+                        UPDATE lessons SET file_hash=?, filepath=?, filename=?, author=?, title=?,
+                            lesson_date=?, file_mtime=?, file_size=?, file_mtime_ns=?,
+                            transcript_size=?, transcript_mtime_ns=?,
+                            transcript=CASE WHEN ? THEN ? ELSE transcript END,
+                            status=CASE WHEN status='Archived' THEN COALESCE(status_before_archive,
+                                CASE WHEN completed_at IS NOT NULL THEN 'Completed' ELSE 'New' END)
                                 ELSE status END,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                    ''', (filename, filepath, parsed['author'], parsed['title'],
-                          parsed['lesson_date'], mtime, transcript, matching['id']))
+                            updated_at=CURRENT_TIMESTAMP WHERE id=?
+                    """, (*values, subtitle_changed, transcript, matching['id']))
                     stats['updated'] += 1
+                    # A duplicate copy later in this scan must see the migrated hash.
+                    by_hash.pop(matching['file_hash'], None)
+                    matching = dict(matching, file_hash=file_hash, filepath=filepath)
+                    by_hash[file_hash] = matching
                 else:
-                    conn.execute('''
+                    conn.execute("""
                         INSERT INTO lessons (file_hash, filepath, filename, author, title,
-                                             lesson_date, file_mtime, status, transcript)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'New', ?)
-                    ''', (file_hash, filepath, filename, parsed['author'], parsed['title'],
-                          parsed['lesson_date'], mtime, transcript))
+                            lesson_date, file_mtime, file_size, file_mtime_ns, transcript_size,
+                            transcript_mtime_ns, transcript)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (*values, transcript))
                     stats['added'] += 1
 
-            # Archive by content identity so a replaced file archives its old lesson.
-            # Avoid archiving anything after an incomplete scan or read failure.
-            if current_hashes and not stats['errors']:
+            # A successfully scanned empty folder must also archive removed files.
+            # Never archive after any incomplete scan, parse, or read operation.
+            if not stats['errors']:
                 conn.execute('CREATE TEMP TABLE synced_hashes (file_hash TEXT PRIMARY KEY)')
                 conn.executemany('INSERT INTO synced_hashes VALUES (?)',
-                                 [(file_hash,) for file_hash in current_hashes])
-                stats['archived'] = conn.execute('''
-                    UPDATE lessons SET status = 'Archived', updated_at = CURRENT_TIMESTAMP
-                    WHERE status != 'Archived'
-                      AND NOT EXISTS (SELECT 1 FROM synced_hashes
-                                      WHERE synced_hashes.file_hash = lessons.file_hash)
-                ''').rowcount
-                conn.execute('DROP TABLE synced_hashes')
-
+                                 [(value,) for value in current_hashes])
+                stats['archived'] = conn.execute("""
+                    UPDATE lessons SET status_before_archive=status, status='Archived',
+                        updated_at=CURRENT_TIMESTAMP
+                    WHERE status!='Archived' AND NOT EXISTS
+                        (SELECT 1 FROM synced_hashes WHERE synced_hashes.file_hash=lessons.file_hash)
+                """).rowcount
         self.invalidate_cache()
         return stats
 
-    def get_paginated_lessons(self, page: int = 1, page_size: int = None, status_filter: Optional[List[str]] = None,
-                              author_filter: Optional[str] = None,
-                              date_from: Optional[datetime] = None,
-                              date_to: Optional[datetime] = None,
-                              search_query: Optional[str] = None,
-                              year_filter: Optional[int] = None,
-                              month_filter: Optional[int] = None,
-                              tag_ids: Optional[List[int]] = None) -> Tuple[List[Dict[str, Any]], int]:
-        """Get lessons with server-side pagination."""
-        if page_size is None:
-            page_size = PAGE_SIZE
-
-        conditions = ['status != "Archived"']
+    def _lesson_filter(self, status_filter=None, author_filter=None, date_from=None,
+                       date_to=None, search_query=None, year_filter=None,
+                       month_filter=None, tag_ids=None, transcript_query=None):
+        conditions = ["l.status != 'Archived'"]
         params = []
-
         if status_filter:
-            placeholders = ','.join('?' * len(status_filter))
-            conditions.append(f'status IN ({placeholders})')
+            conditions.append('l.status IN (' + ','.join('?' for _ in status_filter) + ')')
             params.extend(status_filter)
-
         if author_filter:
-            conditions.append('author = ?')
+            conditions.append('l.author = ?')
             params.append(author_filter)
-
-        if date_from:
-            conditions.append('lesson_date >= ?')
-            params.append(date_from)
-
-        if date_to:
-            conditions.append('lesson_date <= ?')
-            params.append(date_to)
-
+        for value, operator in ((date_from, '>='), (date_to, '<=')):
+            if value:
+                conditions.append(f'l.lesson_date {operator} ?')
+                params.append(value.isoformat() if hasattr(value, 'isoformat') else value)
+        def literal_pattern(value):
+            return '%' + value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
         if search_query:
-            conditions.append('(title LIKE ? OR author LIKE ?)')
-            params.extend([f'%{search_query}%', f'%{search_query}%'])
-
+            conditions.append("(l.title LIKE ? ESCAPE '\\' OR l.author LIKE ? ESCAPE '\\')")
+            params.extend([literal_pattern(search_query)] * 2)
         if year_filter:
-            conditions.append('strftime("%Y", lesson_date) = ?')
-            params.append(str(year_filter))
-
+            conditions.append('l.lesson_date >= ? AND l.lesson_date < ?')
+            params.extend([f'{int(year_filter):04d}-01-01', f'{int(year_filter)+1:04d}-01-01'])
         if month_filter:
-            conditions.append('strftime("%m", lesson_date) = ?')
-            params.append(f'{month_filter:02d}')
+            conditions.append("strftime('%m', l.lesson_date) = ?")
+            params.append(f'{int(month_filter):02d}')
+        for tag_id in set(tag_ids or []):
+            conditions.append('EXISTS (SELECT 1 FROM lesson_tags lt WHERE lt.lesson_id=l.id AND lt.tag_id=?)')
+            params.append(tag_id)
+        if transcript_query:
+            conditions.append("LOWER(l.transcript) LIKE ? ESCAPE '\\'")
+            params.append(literal_pattern(transcript_query.lower().strip()))
+        return ' AND '.join(conditions), params
 
-        # Tag filtering - lessons must have ALL specified tags
-        tag_join = ''
-        tag_having = ''
-        if tag_ids:
-            placeholders = ','.join('?' * len(tag_ids))
-            tag_join = 'JOIN lesson_tags lt ON lessons.id = lt.lesson_id'
-            conditions.append(f'lt.tag_id IN ({placeholders})')
-            params.extend(tag_ids)
-            tag_having = f'HAVING COUNT(DISTINCT lt.tag_id) = {len(tag_ids)}'
-
-        where_clause = ' AND '.join(conditions)
-
+    def get_matching_lesson_ids(self, **filters):
+        """Fetch all matching identities only, for bulk operations and playlists."""
+        where, params = self._lesson_filter(**filters)
         with self._get_connection() as conn:
-            if tag_ids:
-                count_query = f'''
-                    SELECT COUNT(*) FROM (
-                        SELECT lessons.id FROM lessons {tag_join}
-                        WHERE {where_clause}
-                        GROUP BY lessons.id {tag_having}
-                    )
-                '''
-                total = conn.execute(count_query, params).fetchone()[0]
-            else:
-                total = conn.execute(f'SELECT COUNT(*) FROM lessons WHERE {where_clause}', params).fetchone()[0]
+            return [row[0] for row in conn.execute(
+                f'SELECT l.id FROM lessons l WHERE {where} ORDER BY l.lesson_date DESC, l.id DESC', params)]
 
-            offset = (page - 1) * page_size
-            if tag_ids:
-                query = f'''
-                    SELECT lessons.id, file_hash, filename, filepath, author, title, lesson_date,
-                           status, completed_at, lessons.created_at
-                    FROM lessons {tag_join}
-                    WHERE {where_clause}
-                    GROUP BY lessons.id {tag_having}
-                    ORDER BY lesson_date DESC
-                    LIMIT {page_size} OFFSET {offset}
-                '''
-            else:
-                query = f'''
-                    SELECT id, file_hash, filename, filepath, author, title, lesson_date,
-                           status, completed_at, created_at
-                    FROM lessons
-                    WHERE {where_clause}
-                    ORDER BY lesson_date DESC
-                    LIMIT {page_size} OFFSET {offset}
-                '''
-            rows = conn.execute(query, params).fetchall()
-            lessons = [dict(row) for row in rows]
+    def get_library_lessons(self, **filters):
+        """Return lightweight rows for the grid's own pagination and filtering."""
+        where, params = self._lesson_filter(**filters)
+        query = filters.get('transcript_query')
+        context_column = ''
+        select_params = []
+        if query:
+            # Extract a bounded excerpt in SQLite; do not load all transcript bodies.
+            context_column = ', substr(l.transcript, max(1, instr(lower(l.transcript), ?) - 120), 320) AS context'
+            select_params.append(query.lower().strip())
+        with self._get_connection() as conn:
+            rows = conn.execute(f'''
+                SELECT l.id, author, title, lesson_date, status {context_column}
+                FROM lessons l WHERE {where}
+                ORDER BY lesson_date DESC, l.id DESC
+            ''', [*select_params, *params]).fetchall()
+        return [dict(row) for row in rows], len(rows)
 
-        return lessons, total
+    def get_paginated_lessons(self, page=1, page_size=None, **filters):
+        page = 1 if page is None else page
+        page_size = PAGE_SIZE if page_size is None else int(page_size)
+        if page_size < 1 or int(page) < 1:
+            raise ValueError('Page and page size must be positive')
+        where, params = self._lesson_filter(**filters)
+        with self._get_connection() as conn:
+            total = conn.execute(f'SELECT COUNT(*) FROM lessons l WHERE {where}', params).fetchone()[0]
+            rows = conn.execute(f"""
+                SELECT l.id, file_hash, filename, filepath, author, title, lesson_date,
+                       status, completed_at, created_at
+                FROM lessons l WHERE {where}
+                ORDER BY lesson_date DESC, l.id DESC LIMIT ? OFFSET ?
+            """, [*params, page_size, (int(page)-1)*page_size]).fetchall()
+            return [dict(row) for row in rows], total
 
-    def search_transcripts(self, query: str, page_size: int = 500,
-                           status_filter: Optional[List[str]] = None,
-                           author_filter: Optional[str] = None,
-                           year_filter: Optional[int] = None,
-                           month_filter: Optional[int] = None,
-                           tag_ids: Optional[List[int]] = None) -> Tuple[List[Dict[str, Any]], int]:
-        """Search transcripts efficiently and return matching lessons with context snippets.
-
-        Optimized for 15k+ videos with 8-min average transcripts.
-        Returns lessons with a 'context' field showing ~15 words around the match.
-        """
+    def search_transcripts(self, query, page_size=100, page=1, **filters):
         if not query or not query.strip():
             return [], 0
-
-        query_lower = query.lower().strip()
-        context_words = 8  # words before and after match
-
-        conditions = ['status != "Archived"', 'transcript IS NOT NULL']
-        params = []
-
-        if status_filter:
-            placeholders = ','.join('?' * len(status_filter))
-            conditions.append(f'status IN ({placeholders})')
-            params.extend(status_filter)
-
-        if author_filter:
-            conditions.append('author = ?')
-            params.append(author_filter)
-
-        if year_filter:
-            conditions.append('strftime("%Y", lesson_date) = ?')
-            params.append(str(year_filter))
-
-        if month_filter:
-            conditions.append('strftime("%m", lesson_date) = ?')
-            params.append(f'{month_filter:02d}')
-
-        # Tag filtering
-        tag_join = ''
-        tag_having = ''
-        if tag_ids:
-            placeholders = ','.join('?' * len(tag_ids))
-            tag_join = 'JOIN lesson_tags lt ON lessons.id = lt.lesson_id'
-            conditions.append(f'lt.tag_id IN ({placeholders})')
-            params.extend(tag_ids)
-            tag_having = f'HAVING COUNT(DISTINCT lt.tag_id) = {len(tag_ids)}'
-
-        where_clause = ' AND '.join(conditions)
-
+        lessons, total = self.get_paginated_lessons(
+            page=page, page_size=page_size, transcript_query=query, **filters)
+        # Fetch transcript bodies only for this visible page.
         with self._get_connection() as conn:
-            # Use LIKE for case-insensitive search (SQLite LIKE is case-insensitive for ASCII)
-            # First get count
-            if tag_ids:
-                count_query = f'''
-                    SELECT COUNT(*) FROM (
-                        SELECT lessons.id FROM lessons {tag_join}
-                        WHERE {where_clause} AND LOWER(transcript) LIKE ?
-                        GROUP BY lessons.id {tag_having}
-                    )
-                '''
-            else:
-                count_query = f'''
-                    SELECT COUNT(*) FROM lessons
-                    WHERE {where_clause} AND LOWER(transcript) LIKE ?
-                '''
-            total = conn.execute(count_query, params + [f'%{query_lower}%']).fetchone()[0]
-
-            # Fetch matching lessons with transcript for context extraction
-            if tag_ids:
-                data_query = f'''
-                    SELECT lessons.id, file_hash, filename, filepath, author, title, lesson_date,
-                           status, completed_at, lessons.created_at, transcript
-                    FROM lessons {tag_join}
-                    WHERE {where_clause} AND LOWER(transcript) LIKE ?
-                    GROUP BY lessons.id {tag_having}
-                    ORDER BY lesson_date DESC
-                    LIMIT {page_size}
-                '''
-            else:
-                data_query = f'''
-                    SELECT id, file_hash, filename, filepath, author, title, lesson_date,
-                           status, completed_at, created_at, transcript
-                    FROM lessons
-                    WHERE {where_clause} AND LOWER(transcript) LIKE ?
-                    ORDER BY lesson_date DESC
-                    LIMIT {page_size}
-                '''
-            rows = conn.execute(data_query, params + [f'%{query_lower}%']).fetchall()
-
-            lessons = []
-            for row in rows:
-                lesson = dict(row)
-                transcript = lesson.pop('transcript', '') or ''
-
-                # Extract context around match (efficient string search)
-                transcript_lower = transcript.lower()
-                match_pos = transcript_lower.find(query_lower)
-
-                if match_pos >= 0:
-                    # Find word boundaries around match
-                    words = transcript.split()
-                    char_count = 0
-                    match_word_idx = 0
-
-                    # Find which word contains the match
-                    for i, word in enumerate(words):
-                        if char_count + len(word) >= match_pos:
-                            match_word_idx = i
-                            break
-                        char_count += len(word) + 1  # +1 for space
-
-                    # Extract context window
-                    start_idx = max(0, match_word_idx - context_words)
-                    end_idx = min(len(words), match_word_idx + context_words + 1)
-                    context_words_list = words[start_idx:end_idx]
-
-                    # Build context string with ellipsis
-                    context = ' '.join(context_words_list)
-                    if start_idx > 0:
-                        context = '...' + context
-                    if end_idx < len(words):
-                        context = context + '...'
-
-                    lesson['context'] = context
-                else:
-                    lesson['context'] = ''
-
-                lessons.append(lesson)
-
+            for lesson in lessons:
+                row = conn.execute('SELECT transcript FROM lessons WHERE id=?', (lesson['id'],)).fetchone()
+                transcript = row[0] or ''
+                match = transcript.lower().find(query.lower().strip())
+                before = transcript[:match].split() if match >= 0 else []
+                after = transcript[match:].split() if match >= 0 else []
+                lesson['context'] = (('...' if len(before) > 8 else '')
+                    + ' '.join(before[-8:] + after[:len(query.split())+8])
+                    + ('...' if len(after) > len(query.split())+8 else ''))
         return lessons, total
 
     def update_status(self, lesson_id: int, status: str) -> bool:
@@ -419,13 +312,16 @@ class LessonsMixin:
         if status not in ('New', 'In Progress', 'Completed'):
             return False
 
-        completed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S') if status == 'Completed' else None
+        completed_at = datetime.now().isoformat(sep=' ', timespec='microseconds')
 
         with self._get_connection() as conn:
             conn.execute('''
-                UPDATE lessons SET status = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP
+                UPDATE lessons SET status = ?,
+                    completed_at = CASE WHEN ? = 'Completed' AND status != 'Completed'
+                                        THEN ? ELSE completed_at END,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
-            ''', (status, completed_at, lesson_id))
+            ''', (status, status, completed_at, lesson_id))
 
         self.invalidate_cache()
         return True

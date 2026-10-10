@@ -94,6 +94,17 @@ class TagsMixin:
             except Exception:
                 return False  # Already exists
 
+    def add_tag_to_lessons(self, lesson_ids, tag_id):
+        """Add a tag atomically to all lessons using one transaction."""
+        with self._get_connection() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                'INSERT OR IGNORE INTO lesson_tags (lesson_id, tag_id) VALUES (?, ?)',
+                ((lesson_id, tag_id) for lesson_id in set(lesson_ids)))
+            added = conn.total_changes - before
+        self.invalidate_cache()
+        return added
+
     def remove_tag_from_lesson(self, lesson_id: int, tag_id: int) -> bool:
         """Remove a tag from a lesson."""
         with self._get_connection() as conn:
