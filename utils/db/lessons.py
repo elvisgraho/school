@@ -317,8 +317,10 @@ class LessonsMixin:
         with self._get_connection() as conn:
             conn.execute('''
                 UPDATE lessons SET status = ?,
-                    completed_at = CASE WHEN ? = 'Completed' AND status != 'Completed'
-                                        THEN ? ELSE completed_at END,
+                    completed_at = CASE WHEN ? = 'Completed' AND completed_at IS NULL
+                                        THEN COALESCE((SELECT MIN(e.completed_at)
+                                            FROM completion_events e WHERE e.lesson_id = lessons.id), ?)
+                                        ELSE completed_at END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             ''', (status, status, completed_at, lesson_id))

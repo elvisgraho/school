@@ -106,20 +106,70 @@ class DatabaseRegressionTest(unittest.TestCase):
         self.assertGreater(result['errors'], 0)
         self.assertEqual(result['archived'], 0)
 
-    def test_repeat_practice_preserves_history_and_counts_each_completion_once(self):
+    def test_repeat_practice_credits_a_lesson_only_once(self):
         self.seed(completed=True)
         original_date = self.db.get_lesson_by_id(1)['completed_at']
         self.db.update_status(1, 'In Progress')
         self.assertEqual(self.db.get_lesson_by_id(1)['completed_at'], original_date)
         self.assertEqual(self.db.get_today_completions(), 1)
-        self.db.update_status(1, 'Completed')
-        self.db.update_status(1, 'Completed')  # Duplicate callback is idempotent.
-        self.assertEqual(self.db.get_today_completions(), 2)
+        for _ in range(10):
+            self.db.update_status(1, 'Completed')
+            self.db.update_status(1, 'Completed')  # Duplicate callback is idempotent.
+            self.assertEqual(self.db.get_today_completions(), 1)
+            self.assertEqual(self.db.get_week_completions(), 1)
+            self.assertEqual(self.db.get_stats()['completed'], 1)
+            self.db.update_status(1, 'In Progress')
+            self.assertEqual(self.db.get_stats()['completed'], 1)
+            self.assertEqual(self.db.get_remaining_lessons(), 0)
+        self.assertEqual(self.db.get_lesson_by_id(1)['completed_at'], original_date)
+        with self.db._get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM completion_events').fetchone()[0], 1)
         self.assertEqual(len(self.db.get_lessons_completed_on_date(date.today().isoformat())), 1)
         self.assertEqual(self.db.get_backlog_trend()[-1]['completed_cumulative'], 1)
         self.assertEqual(self.db.get_backlog_trend()[-1]['backlog'], 0)
         self.db._init_db()
-        self.assertEqual(self.db.get_today_completions(), 2)
+        self.assertEqual(self.db.get_today_completions(), 1)
+
+    def test_practicing_a_previous_days_lesson_does_not_extend_progress(self):
+        self.seed()
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        with self.db._get_connection() as conn:
+            conn.execute("UPDATE lessons SET status='Completed',completed_at=? WHERE id=1", (yesterday,))
+        self.db.invalidate_cache()
+        self.db.update_status(1, 'In Progress')
+        self.db.update_status(1, 'Completed')
+        self.assertEqual(self.db.get_lesson_by_id(1)['completed_at'], yesterday)
+        self.assertEqual(self.db.get_today_completions(), 0)
+        self.assertEqual(self.db.get_completion_dates(), [date.today() - timedelta(days=1)])
+        self.assertEqual(self.db.get_best_streak(), 1)
+        self.assertEqual(self.db.get_activity_data_for_year(date.today().year)[0]['count'], 1)
+
+    def test_legacy_repeat_credits_are_ignored_without_deleting_history(self):
+        self.seed()
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        today = date.today().isoformat()
+        with self.db._get_connection() as conn:
+            conn.executemany('INSERT INTO completion_events(lesson_id,completed_at) VALUES (1,?)',
+                             [(yesterday,), (today,)])
+            conn.execute("UPDATE lessons SET status='Completed',completed_at=? WHERE id=1", (today,))
+            conn.execute('DROP VIEW completion_activity')
+            conn.execute('''CREATE VIEW completion_activity AS
+                SELECT l.id,l.title,l.author,l.lesson_date,e.completed_at,'Completed' AS status
+                FROM completion_events e JOIN lessons l ON l.id=e.lesson_id''')
+            conn.execute("INSERT INTO personal_records(record_type,value) VALUES ('most_day',99)")
+        self.db._init_db()
+        self.assertEqual(self.db.get_lesson_by_id(1)['completed_at'], yesterday)
+        self.assertEqual(self.db.get_today_completions(), 0)
+        self.assertEqual(self.db.get_most_lessons_in_day()['value'], 1)
+        self.assertEqual(self.db.get_best_streak(), 1)
+        self.assertNotIn('most_day', self.db.get_personal_records())
+        self.db.compute_and_update_records()
+        self.assertEqual(self.db.get_personal_records()['most_day']['value'], 1)
+        self.db._init_db()
+        self.assertEqual(self.db.get_personal_records()['most_day']['value'], 1)
+        with self.db._get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM completion_events').fetchone()[0], 2)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM completion_activity').fetchone()[0], 1)
 
     def test_400_day_streak_is_not_truncated(self):
         self.seed(400)
@@ -130,6 +180,29 @@ class DatabaseRegressionTest(unittest.TestCase):
         self.assertEqual(self.db.get_current_streak(), 400)
         self.assertEqual(self.db.get_best_streak(), 400)
         self.assertFalse(self.db.get_streak_recovery_info()['is_at_best'])
+
+    def test_completion_migration_failure_keeps_the_existing_schema_and_credit(self):
+        self.seed(completed=True)
+        connect = self.db._get_connection
+
+        def deny_view_change():
+            conn = connect()
+            conn.set_authorizer(lambda action, *args:
+                                sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_DROP_VIEW
+                                else sqlite3.SQLITE_OK)
+            return conn
+
+        with patch.object(self.db, '_get_connection', side_effect=deny_view_change):
+            with self.assertRaises(sqlite3.DatabaseError):
+                self.db._init_db()
+        with connect() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' "
+                                          "AND name IN ('record_insert_completion', "
+                                          "'record_update_completion')").fetchone()[0], 2)
+        self.assertEqual(self.db.get_today_completions(), 1)
+        self.db.update_status(1, 'In Progress')
+        self.db.update_status(1, 'Completed')
+        self.assertEqual(self.db.get_today_completions(), 1)
 
     def test_all_pages_and_all_matching_ids_are_available(self):
         self.seed(1101)

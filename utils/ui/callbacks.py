@@ -4,6 +4,8 @@ Helper callbacks for Video School UI.
 
 import streamlit as st
 import random
+from datetime import date
+from uuid import uuid4
 
 
 def set_lesson(lesson_id):
@@ -19,7 +21,24 @@ def clear_lesson():
 
 def update_status_callback(db, lesson_id, new_status):
     """Callback: Update DB status without resetting UI state."""
-    db.update_status(lesson_id, new_status)
+    before = db.get_daily_progress() if new_status == 'Completed' else None
+    if not db.update_status(lesson_id, new_status):
+        return
+    if before is not None:
+        # The finish-by target can decrease when the remaining library shrinks.
+        db.refresh_deadline_goal()
+        after = db.get_daily_progress()
+        today = date.today().isoformat()
+        if (before['goal'] > 0
+                and before['completed'] < before['goal']
+                and after['completed'] > before['completed']
+                and after['completed'] >= after['goal']
+                and st.session_state.get('daily_goal_celebrated_on') != today):
+            st.session_state.daily_goal_celebrated_on = today
+            st.session_state.daily_goal_celebration = {
+                'id': uuid4().hex,
+                'completed': after['completed'],
+            }
     # Streamlit automatically reruns after this.
     # Because selected_lesson_id is in session_state, the player will reopen.
 
@@ -134,5 +153,5 @@ def exit_playlist():
 
 def complete_and_next(db, lesson_id):
     """Callback: Mark current lesson complete and advance to next in playlist."""
-    db.update_status(lesson_id, 'Completed')
+    update_status_callback(db, lesson_id, 'Completed')
     playlist_next()

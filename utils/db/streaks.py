@@ -115,7 +115,7 @@ class StreaksMixin:
             row = conn.execute('''
                 SELECT COUNT(*) AS count
                 FROM lessons
-                WHERE status NOT IN ('Completed', 'Archived')
+                WHERE status NOT IN ('Completed', 'Archived') AND completed_at IS NULL
             ''').fetchone()
             return row['count'] if row else 0
 

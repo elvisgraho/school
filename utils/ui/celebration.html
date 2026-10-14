@@ -1,0 +1,245 @@
+<template>
+    <style>
+      :host, :host * { box-sizing: border-box; pointer-events: none !important; }
+      canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+      .banner {
+        position: absolute; top: max(72px, env(safe-area-inset-top)); left: 50%;
+        width: max-content; max-width: calc(100vw - 32px); padding: 18px 28px;
+        color: #fff8e6; text-align: center; border: 1px solid #f6cf8060;
+        border-radius: 22px; font-family: system-ui, sans-serif;
+        background: linear-gradient(135deg, #242339ef, #102e30f2);
+        box-shadow: 0 12px 48px #0005, 0 0 44px #e9bd5720, inset 0 1px 0 #fff2;
+        animation: goal-banner 6.6s both;
+      }
+      .eyebrow {
+        color: #f6d48b; font-size: 10px; font-weight: 700;
+        letter-spacing: .24em; text-transform: uppercase;
+      }
+      .title { margin: 6px 0; font-size: clamp(21px, 4.8vw, 30px); font-weight: 750; letter-spacing: -.04em; }
+      .detail { color: #d0dfdb; font-size: 13px; line-height: 1.5; }
+      .star { display: inline-block; margin: 0 8px; color: #ffe2a0; }
+      @keyframes goal-banner {
+        0% { opacity: 0; transform: translate(-50%, -16px) scale(.94); }
+        9%, 77% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+        100% { opacity: 0; transform: translate(-50%, -8px) scale(.98); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        canvas { display: none; }
+        .banner { animation: goal-banner-still 4.5s both; transform: translateX(-50%); }
+        @keyframes goal-banner-still { 0%, 90% { opacity: 1; } 100% { opacity: 0; } }
+      }
+    </style>
+    <canvas aria-hidden="true"></canvas>
+    <div class="banner" role="status" aria-live="polite" aria-atomic="true">
+      <div class="eyebrow"><span class="star">✦</span>Today's win<span class="star">✦</span></div>
+      <div class="title">Daily goal complete</div>
+      <div class="detail"></div>
+    </div></template>
+<div hidden aria-hidden="true">
+<script>
+(() => {
+  const event = __CELEBRATION_EVENT__;
+  const previous = window.__videoSchoolGoalCelebration;
+  if (previous?.id === event.id) return;
+  previous?.cleanup?.();
+
+  // A separate, fixed layer survives app rerenders without capturing input.
+  const host = document.createElement('div');
+  host.id = 'daily-goal-celebration';
+  Object.assign(host.style, {
+    position: 'fixed', inset: '0', zIndex: '2147483000',
+    pointerEvents: 'none', overflow: 'hidden',
+  });
+  const shadow = host.attachShadow({mode: 'open'});
+  shadow.innerHTML = __CELEBRATION_MARKUP__;
+  shadow.querySelector('.detail').textContent =
+    `${event.completed} ${event.completed === 1 ? 'lesson' : 'lessons'} today. You showed up. You did it.`;
+  document.body.appendChild(host);
+
+  const canvas = shadow.querySelector('canvas');
+  const ctx = canvas.getContext('2d');
+  const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let width, height, frame = 0, timer, stopped = false;
+  const particles = [], rockets = [], halos = [];
+  const colors = ['#ffdc8b', '#7fffe2', '#c0a3ff', '#ff98c6', '#8bcbff'];
+  const glows = new Map();
+  function glow(color) {
+    if (glows.has(color)) return glows.get(color);
+    const sprite = document.createElement('canvas');
+    sprite.width = sprite.height = 32;
+    const brush = sprite.getContext('2d');
+    const light = brush.createRadialGradient(16, 16, 0, 16, 16, 16);
+    light.addColorStop(0, color);
+    light.addColorStop(.15, color + 'bb');
+    light.addColorStop(.45, color + '28');
+    light.addColorStop(1, color + '00');
+    brush.fillStyle = light;
+    brush.fillRect(0, 0, 32, 32);
+    glows.set(color, sprite);
+    return sprite;
+  }
+  const random = (min, max) => min + Math.random() * (max - min);
+  const tau = Math.PI * 2;
+  const duration = 6900;
+  const show = [
+    {at: 80, x: .50, y: .31, color: 0, type: 'bloom', instant: true},
+    {at: 180, x: .22, y: .30, color: 1, type: 'bloom'},
+    {at: 470, x: .78, y: .24, color: 2, type: 'ring'},
+    {at: 1000, x: .38, y: .19, color: 3, type: 'willow'},
+    {at: 1400, x: .65, y: .36, color: 4, type: 'bloom'},
+    {at: 2020, x: .17, y: .40, color: 0, type: 'willow'},
+    {at: 2280, x: .83, y: .38, color: 1, type: 'ring'},
+    {at: 2800, x: .47, y: .26, color: 2, type: 'bloom'},
+    {at: 3070, x: .31, y: .34, color: 0, type: 'ring'},
+    {at: 3270, x: .70, y: .20, color: 3, type: 'willow'},
+  ];
+  let next = 0;
+
+  function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    const ratio = Math.min(window.devicePixelRatio || 1, 1.75);
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    ctx?.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }
+
+  function cleanup() {
+    if (stopped) return;
+    stopped = true;
+    cancelAnimationFrame(frame);
+    clearTimeout(timer);
+    window.removeEventListener('resize', resize);
+    window.removeEventListener('pagehide', cleanup);
+    document.removeEventListener('visibilitychange', onVisibility);
+    motion.removeEventListener('change', onMotionChange);
+    host.remove();
+    particles.length = rockets.length = halos.length = 0;
+    window.__videoSchoolGoalCelebration = {id: event.id};
+  }
+  function onVisibility() { if (document.hidden) cleanup(); }
+  function onMotionChange() { if (motion.matches) cancelAnimationFrame(frame); }
+  window.__videoSchoolGoalCelebration = {id: event.id, cleanup};
+  window.addEventListener('pagehide', cleanup);
+  document.addEventListener('visibilitychange', onVisibility);
+  motion.addEventListener('change', onMotionChange);
+  timer = setTimeout(cleanup, motion.matches ? 4600 : duration);
+  if (motion.matches || !ctx) return;
+  resize();
+  window.addEventListener('resize', resize, {passive: true});
+
+  function burst(rocket) {
+    const x = rocket.x * width, y = rocket.y * height;
+    const scale = Math.min(width, height, 1000) / 800;
+    const count = Math.round((rocket.type === 'willow' ? 115 : 90) * (width < 600 ? .65 : 1));
+    halos.push({x, y, age: 0, color: colors[rocket.color], radius: 115 * scale});
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * tau + random(-.035, .035);
+      const outerRing = i % 3 !== 0;
+      const speed = (rocket.type === 'ring' ? (outerRing ? 155 : 82) : random(40, 190)) * scale;
+      const life = rocket.type === 'willow' ? random(1.9, 2.7) : random(1.2, 2.2);
+      particles.push({
+        x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        age: 0, life, drag: rocket.type === 'willow' ? .45 : .85,
+        gravity: rocket.type === 'willow' ? 62 : 48,
+        color: i % 6 === 0 ? '#fff7d9' : colors[rocket.color],
+        size: random(1.1, 2.2) * Math.max(.7, scale),
+        twinkle: random(0, tau), trail: [],
+      });
+    }
+    // Smaller golden embers provide a second layer of drifting shimmer.
+    for (let i = 0; i < 18; i++) {
+      particles.push({x, y, vx: random(-65, 65) * scale, vy: random(-90, 10) * scale,
+        age: 0, life: random(1.6, 2.7), drag: 1.2, gravity: 40,
+        color: '#ffdf99', size: 1.2, twinkle: random(0, tau), trail: []});
+    }
+  }
+
+  const start = performance.now();
+  let last = start;
+  function draw(now) {
+    if (stopped) return;
+    const elapsed = now - start;
+    if (elapsed >= duration) { cleanup(); return; }
+    const dt = Math.min((now - last) / 1000, .04);
+    last = now;
+    ctx.clearRect(0, 0, width, height);
+    ctx.globalCompositeOperation = 'lighter';
+    const fade = Math.min(1, (duration - elapsed) / 1000);
+
+    while (next < show.length && elapsed >= show[next].at) {
+      const launch = show[next++];
+      if (launch.instant) burst(launch);
+      else rockets.push({...launch, age: 0, travel: random(.48, .70)});
+    }
+    for (let i = rockets.length - 1; i >= 0; i--) {
+      const r = rockets[i];
+      r.age += dt;
+      const t = Math.min(1, r.age / r.travel);
+      const originX = r.x < .5 ? r.x - .10 : r.x + .10;
+      const point = progress => ({
+        x: (originX + (r.x - originX) * progress) * width,
+        y: height * (.94 + (r.y - .94) * (1 - Math.pow(1 - progress, 1.6))),
+      });
+      const head = point(t);
+      const tail = point(Math.max(0, t - .14));
+      const gradient = ctx.createLinearGradient(tail.x, tail.y, head.x, head.y);
+      gradient.addColorStop(0, 'transparent');
+      gradient.addColorStop(1, colors[r.color]);
+      ctx.globalAlpha = .85 * fade;
+      ctx.strokeStyle = gradient;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(tail.x, tail.y); ctx.lineTo(head.x, head.y); ctx.stroke();
+      ctx.fillStyle = '#fff5d3';
+      ctx.beginPath(); ctx.arc(head.x, head.y, 2.2, 0, tau); ctx.fill();
+      if (t >= 1) { burst(r); rockets.splice(i, 1); }
+    }
+    for (let i = halos.length - 1; i >= 0; i--) {
+      const h = halos[i]; h.age += dt;
+      if (h.age > .7) { halos.splice(i, 1); continue; }
+      const radius = h.radius * (.5 + h.age * 1.5);
+      const gradient = ctx.createRadialGradient(h.x, h.y, 0, h.x, h.y, radius);
+      gradient.addColorStop(0, h.color + '50');
+      gradient.addColorStop(.35, h.color + '18');
+      gradient.addColorStop(1, h.color + '00');
+      ctx.globalAlpha = Math.pow(1 - h.age / .7, 2) * fade;
+      ctx.fillStyle = gradient;
+      ctx.fillRect(h.x - radius, h.y - radius, radius * 2, radius * 2);
+    }
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i]; p.age += dt;
+      if (p.age >= p.life) { particles.splice(i, 1); continue; }
+      p.trail.push({x: p.x, y: p.y});
+      if (p.trail.length > 7) p.trail.shift();
+      const drag = Math.exp(-p.drag * dt);
+      p.vx *= drag; p.vy = p.vy * drag + p.gravity * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      const life = 1 - p.age / p.life;
+      const shimmer = p.age > .6 ? .55 + .45 * Math.pow(Math.sin(p.age * 19 + p.twinkle), 2) : 1;
+      const alpha = Math.min(1, life * 2) * shimmer * fade;
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = p.size * .75;
+      for (let j = 1; j < p.trail.length; j++) {
+        ctx.globalAlpha = alpha * (j / p.trail.length) * .32;
+        ctx.beginPath(); ctx.moveTo(p.trail[j - 1].x, p.trail[j - 1].y);
+        ctx.lineTo(p.trail[j].x, p.trail[j].y); ctx.stroke();
+      }
+      ctx.globalAlpha = alpha * .55;
+      const glowSize = p.size * 9;
+      ctx.drawImage(glow(p.color), p.x - glowSize / 2, p.y - glowSize / 2, glowSize, glowSize);
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = alpha;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size * Math.max(.4, life), 0, tau); ctx.fill();
+      if (shimmer > .91 && p.age > .5) {
+        ctx.strokeStyle = '#fff7da'; ctx.lineWidth = .7;
+        ctx.beginPath(); ctx.moveTo(p.x - 3, p.y); ctx.lineTo(p.x + 3, p.y);
+        ctx.moveTo(p.x, p.y - 3); ctx.lineTo(p.x, p.y + 3); ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    frame = requestAnimationFrame(draw);
+  }
+  frame = requestAnimationFrame(draw);
+})();
+</script>
+</div>

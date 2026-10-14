@@ -53,6 +53,13 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual([tab.label for tab in self.app.tabs],
                          ['DISCOVERY', 'LIBRARY', 'ANALYTICS'])
 
+    def seed_extra_lesson(self):
+        with self.db._get_connection() as conn:
+            conn.execute('''INSERT INTO lessons(file_hash,filepath,filename,author,title,lesson_date)
+                VALUES ('extra','missing.mp4','missing.mp4','Teacher','Extra lesson',?)''',
+                         (date.today().isoformat(),))
+        self.db.invalidate_cache()
+
     def test_populated_dashboard_search_and_practice(self):
         self.seed_lessons()
         self.app.run()
@@ -65,9 +72,35 @@ class AppTestCase(unittest.TestCase):
         next(button for button in self.app.button if button.label == 'Start').click().run()
         self.assert_app_ok()
         self.assertEqual(self.db.get_lesson_by_id(1)['status'], 'In Progress')
+        player_before = next(element.proto.body for element in self.app.get('html')
+                             if 'aria-label="Lesson video player"' in element.proto.body)
         next(button for button in self.app.button if button.label == 'Complete').click().run()
         self.assert_app_ok()
         self.assertEqual(self.db.get_lesson_by_id(1)['status'], 'Completed')
+        self.assertEqual(self.app.session_state['selected_lesson_id'], 1)
+        self.assertEqual(self.app.session_state['playlist_ids'], [])
+        players_after = [element.proto.body for element in self.app.get('html')
+                         if 'aria-label="Lesson video player"' in element.proto.body]
+        self.assertEqual(players_after, [player_before])
+        self.assertTrue(any(button.label == 'Practice Again' for button in self.app.button))
+
+    def test_spamming_practice_and_complete_does_not_increase_counters(self):
+        self.seed_lessons()
+        self.app.run()
+        self.app.button(key='sug_1').click().run()
+        next(button for button in self.app.button if button.label == 'Start').click().run()
+        next(button for button in self.app.button if button.label == 'Complete').click().run()
+        first_date = self.db.get_lesson_by_id(1)['completed_at']
+        for _ in range(5):
+            next(button for button in self.app.button if button.label == 'Practice Again').click().run()
+            self.assertEqual(next(metric for metric in self.app.metric if metric.label == 'Done').value, '2')
+            next(button for button in self.app.button if button.label == 'Complete').click().run()
+            self.assert_app_ok()
+            self.assertEqual(self.db.get_today_completions(), 2)
+            self.assertEqual(self.db.get_week_completions(), 2)
+            self.assertEqual(self.db.get_stats()['completed'], 2)
+            self.assertEqual(self.db.get_lesson_by_id(1)['completed_at'], first_date)
+            self.assertFalse(self.celebration_elements())
 
     def test_disable_zero_deadline_goal(self):
         self.db.set_setting('deadline_goal_enabled', 'true')
@@ -82,6 +115,69 @@ class AppTestCase(unittest.TestCase):
         self.assert_app_ok()
         self.assertGreaterEqual(self.db.get_daily_goal(), 1)
 
+    def celebration_elements(self):
+        return [element for element in self.app.get('html')
+                if '__videoSchoolGoalCelebration' in element.proto.body]
+
+    def test_daily_goal_celebrates_once_without_replaying_on_reruns(self):
+        self.seed_lessons()
+        self.db.set_setting('daily_goal', '2')
+        self.app.session_state['selected_lesson_id'] = 2
+        self.app.run()
+        self.assertFalse(self.celebration_elements())
+        next(button for button in self.app.button if button.label == 'Complete').click().run()
+        self.assert_app_ok()
+        self.assertEqual(len(self.celebration_elements()), 1)
+        self.assertTrue(self.celebration_elements()[0].proto.unsafe_allow_javascript)
+        self.assertEqual(self.app.session_state['daily_goal_celebrated_on'], date.today().isoformat())
+        self.assertNotIn('daily_goal_celebration', self.app.session_state)
+        self.app.run()
+        self.assertFalse(self.celebration_elements())
+        next(button for button in self.app.button if button.label == 'Practice Again').click().run()
+        next(button for button in self.app.button if button.label == 'Complete').click().run()
+        self.assert_app_ok()
+        self.assertFalse(self.celebration_elements())
+
+    def test_playlist_goal_celebration_preserves_advancement(self):
+        self.seed_lessons()
+        self.db.set_setting('daily_goal', '2')
+        self.app.session_state['playlist_ids'] = [2, 1]
+        self.app.session_state['playlist_index'] = 0
+        self.app.session_state['selected_lesson_id'] = 2
+        self.app.run()
+        next(button for button in self.app.button if button.label == 'Complete & Next').click().run()
+        self.assert_app_ok()
+        self.assertEqual(self.app.session_state['selected_lesson_id'], 1)
+        self.assertEqual(len(self.celebration_elements()), 1)
+        self.app.run()
+        self.assertFalse(self.celebration_elements())
+
+    def test_deadline_goal_celebrates_when_target_decreases_after_completion(self):
+        self.seed_lessons()
+        self.seed_extra_lesson()
+        self.db.set_setting('deadline_goal_enabled', 'true')
+        self.db.set_setting('deadline_goal_date', (date.today() + timedelta(days=1)).isoformat())
+        self.app.session_state['selected_lesson_id'] = 2
+        self.app.run()
+        self.assertEqual(self.db.get_daily_goal(), 2)
+        next(button for button in self.app.button if button.label == 'Complete').click().run()
+        self.assert_app_ok()
+        self.assertEqual(self.db.get_daily_goal(), 1)
+        self.assertEqual(len(self.celebration_elements()), 1)
+
+    def test_goal_already_met_or_disabled_does_not_celebrate(self):
+        self.seed_lessons()
+        for goal in ('1', '0'):
+            with self.subTest(goal=goal):
+                self.db.set_setting('daily_goal', goal)
+                self.app.session_state['selected_lesson_id'] = 2
+                self.app.run()
+                self.assertFalse(self.celebration_elements())
+                next(button for button in self.app.button if button.label == 'Complete').click().run()
+                self.assert_app_ok()
+                self.assertFalse(self.celebration_elements())
+                self.db.update_status(2, 'In Progress')
+
     def test_deadline_target_replaces_manual_widget_value(self):
         self.seed_lessons()
         self.app.run()
@@ -89,7 +185,7 @@ class AppTestCase(unittest.TestCase):
         self.app.toggle(key='settings_deadline_enabled').set_value(True).run()
         self.assert_app_ok()
         self.assertEqual(self.app.number_input(key='settings_daily_goal').value, 1)
-        self.db.update_status(3, 'New')
+        self.seed_extra_lesson()
         self.app.date_input(key='settings_deadline_date').set_value(
             date.today() + timedelta(days=1)).run()
         self.assert_app_ok()

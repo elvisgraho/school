@@ -18,10 +18,11 @@ class StatsMixin:
 
         with self._get_connection() as conn:
             rows = conn.execute('''
-                SELECT status, COUNT(*) as cnt
+                SELECT CASE WHEN completed_at IS NOT NULL THEN 'Completed'
+                            ELSE status END AS status, COUNT(*) as cnt
                 FROM lessons
                 WHERE status != 'Archived'
-                GROUP BY status
+                GROUP BY CASE WHEN completed_at IS NOT NULL THEN 'Completed' ELSE status END
             ''').fetchall()
 
             counts = {row['status']: row['cnt'] for row in rows}
@@ -242,9 +243,9 @@ class StatsMixin:
             return [dict(row) for row in rows]
 
     def get_first_completion_date(self):
-        """Earliest historical completion, including repeat and archived lessons."""
+        """Earliest first completion, including archived lessons."""
         with self._get_connection() as conn:
-            return conn.execute('SELECT MIN(DATE(completed_at)) FROM completion_events').fetchone()[0]
+            return conn.execute('SELECT MIN(DATE(completed_at)) FROM completion_activity').fetchone()[0]
 
     def get_completion_dates(self):
         """Share the calendar-day history between current and best streaks."""
@@ -253,6 +254,6 @@ class StatsMixin:
             return cached
         with self._get_connection() as conn:
             dates = [datetime.strptime(row[0], '%Y-%m-%d').date() for row in conn.execute(
-                'SELECT DISTINCT DATE(completed_at) FROM completion_events ORDER BY 1')]
+                'SELECT DISTINCT DATE(completed_at) FROM completion_activity ORDER BY 1')]
         self._set_cache('completion_dates', dates)
         return dates
