@@ -22,6 +22,7 @@ def clear_lesson():
 def update_status_callback(db, lesson_id, new_status):
     """Callback: Update DB status without resetting UI state."""
     before = db.get_daily_progress() if new_status == 'Completed' else None
+    lesson_before = db.get_lesson_by_id(lesson_id) if before is not None else None
     if not db.update_status(lesson_id, new_status):
         return
     if before is not None:
@@ -29,15 +30,19 @@ def update_status_callback(db, lesson_id, new_status):
         db.refresh_deadline_goal()
         after = db.get_daily_progress()
         today = date.today().isoformat()
-        if (before['goal'] > 0
-                and before['completed'] < before['goal']
-                and after['completed'] > before['completed']
-                and after['completed'] >= after['goal']
-                and st.session_state.get('daily_goal_celebrated_on') != today):
-            st.session_state.daily_goal_celebrated_on = today
-            st.session_state.daily_goal_celebration = {
+        if lesson_before and lesson_before['status'] != 'Completed':
+            goal_reached = (before['goal'] > 0
+                            and before['completed'] < before['goal']
+                            and after['completed'] > before['completed']
+                            and after['completed'] >= after['goal']
+                            and st.session_state.get('daily_goal_celebrated_on') != today)
+            if goal_reached:
+                st.session_state.daily_goal_celebrated_on = today
+            # Practice can earn visual feedback again, while completion credit
+            # stays unique. Only fresh credit can upgrade to the daily finale.
+            st.session_state.completion_celebration = {
                 'id': uuid4().hex,
-                'completed': after['completed'],
+                'kind': 'goal' if goal_reached else 'lesson',
             }
     # Streamlit automatically reruns after this.
     # Because selected_lesson_id is in session_state, the player will reopen.

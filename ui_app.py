@@ -5,7 +5,7 @@ from utils.ui import (
     render_discovery, render_library, render_analytics,
     render_practice_room, render_sidebar, apply_global_styles
 )
-from utils.ui.celebration import render_daily_goal_celebration
+from utils.ui.celebration import render_completion_celebration
 
 # Page config must be first Streamlit command
 st.set_page_config(
@@ -88,4 +88,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    render_daily_goal_celebration()
+    render_completion_celebration()

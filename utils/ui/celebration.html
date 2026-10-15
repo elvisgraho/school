@@ -1,67 +1,48 @@
-<template>
-    <style>
-      :host, :host * { box-sizing: border-box; pointer-events: none !important; }
-      canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-      .banner {
-        position: absolute; top: max(72px, env(safe-area-inset-top)); left: 50%;
-        width: max-content; max-width: calc(100vw - 32px); padding: 18px 28px;
-        color: #fff8e6; text-align: center; border: 1px solid #f6cf8060;
-        border-radius: 22px; font-family: system-ui, sans-serif;
-        background: linear-gradient(135deg, #242339ef, #102e30f2);
-        box-shadow: 0 12px 48px #0005, 0 0 44px #e9bd5720, inset 0 1px 0 #fff2;
-        animation: goal-banner 6.6s both;
-      }
-      .eyebrow {
-        color: #f6d48b; font-size: 10px; font-weight: 700;
-        letter-spacing: .24em; text-transform: uppercase;
-      }
-      .title { margin: 6px 0; font-size: clamp(21px, 4.8vw, 30px); font-weight: 750; letter-spacing: -.04em; }
-      .detail { color: #d0dfdb; font-size: 13px; line-height: 1.5; }
-      .star { display: inline-block; margin: 0 8px; color: #ffe2a0; }
-      @keyframes goal-banner {
-        0% { opacity: 0; transform: translate(-50%, -16px) scale(.94); }
-        9%, 77% { opacity: 1; transform: translate(-50%, 0) scale(1); }
-        100% { opacity: 0; transform: translate(-50%, -8px) scale(.98); }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        canvas { display: none; }
-        .banner { animation: goal-banner-still 4.5s both; transform: translateX(-50%); }
-        @keyframes goal-banner-still { 0%, 90% { opacity: 1; } 100% { opacity: 0; } }
-      }
-    </style>
-    <canvas aria-hidden="true"></canvas>
-    <div class="banner" role="status" aria-live="polite" aria-atomic="true">
-      <div class="eyebrow"><span class="star">✦</span>Today's win<span class="star">✦</span></div>
-      <div class="title">Daily goal complete</div>
-      <div class="detail"></div>
-    </div></template>
 <div hidden aria-hidden="true">
 <script>
 (() => {
   const event = __CELEBRATION_EVENT__;
+  const goal = event.kind === 'goal';
   const previous = window.__videoSchoolGoalCelebration;
   if (previous?.id === event.id) return;
+  // A quick lesson completion must not interrupt the daily finale.
+  if (!goal && previous?.kind === 'goal' && previous.cleanup) return;
   previous?.cleanup?.();
+  const random = (min, max) => min + Math.random() * (max - min);
+  const pick = items => items[Math.floor(Math.random() * items.length)];
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+  const history = window.__videoSchoolCelebrationVariants ||= {};
+  const variants = goal ? ['starfall', 'orbital', 'bloom'] : ['petals', 'spiral', 'comets'];
+  const variant = pick(variants.filter(name => name !== history[event.kind]));
+  history[event.kind] = variant;
 
   // A separate, fixed layer survives app rerenders without capturing input.
   const host = document.createElement('div');
-  host.id = 'daily-goal-celebration';
+  host.id = goal ? 'daily-goal-celebration' : 'lesson-completion-celebration';
+  host.dataset.variant = variant;
   Object.assign(host.style, {
     position: 'fixed', inset: '0', zIndex: '2147483000',
     pointerEvents: 'none', overflow: 'hidden',
   });
   const shadow = host.attachShadow({mode: 'open'});
-  shadow.innerHTML = __CELEBRATION_MARKUP__;
-  shadow.querySelector('.detail').textContent =
-    `${event.completed} ${event.completed === 1 ? 'lesson' : 'lessons'} today. You showed up. You did it.`;
+  const canvas = document.createElement('canvas');
+  Object.assign(canvas.style, {
+    position: 'absolute', inset: '0', width: '100%', height: '100%',
+    pointerEvents: 'none',
+  });
+  host.setAttribute('aria-hidden', 'true');
+  shadow.appendChild(canvas);
   document.body.appendChild(host);
 
-  const canvas = shadow.querySelector('canvas');
   const ctx = canvas.getContext('2d');
-  const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let width, height, frame = 0, timer, stopped = false;
   const particles = [], rockets = [], halos = [];
-  const colors = ['#ffdc8b', '#7fffe2', '#c0a3ff', '#ff98c6', '#8bcbff'];
+  const colors = pick([
+    ['#ffd05a', '#4bffe0', '#fff4cf'],
+    ['#b28aff', '#66cfff', '#ff99da'],
+    ['#ff779b', '#ffcc6b', '#fff1d2'],
+    ['#54ffd0', '#bd8bff', '#ffe087'],
+  ]);
   const glows = new Map();
   function glow(color) {
     if (glows.has(color)) return glows.get(color);
@@ -78,22 +59,13 @@
     glows.set(color, sprite);
     return sprite;
   }
-  const random = (min, max) => min + Math.random() * (max - min);
   const tau = Math.PI * 2;
-  const duration = 6900;
-  const show = [
-    {at: 80, x: .50, y: .31, color: 0, type: 'bloom', instant: true},
-    {at: 180, x: .22, y: .30, color: 1, type: 'bloom'},
-    {at: 470, x: .78, y: .24, color: 2, type: 'ring'},
-    {at: 1000, x: .38, y: .19, color: 3, type: 'willow'},
-    {at: 1400, x: .65, y: .36, color: 4, type: 'bloom'},
-    {at: 2020, x: .17, y: .40, color: 0, type: 'willow'},
-    {at: 2280, x: .83, y: .38, color: 1, type: 'ring'},
-    {at: 2800, x: .47, y: .26, color: 2, type: 'bloom'},
-    {at: 3070, x: .31, y: .34, color: 0, type: 'ring'},
-    {at: 3270, x: .70, y: .20, color: 3, type: 'willow'},
-  ];
-  let next = 0;
+  const duration = goal ? random(8100, 8700) : 2400;
+  const show = [];
+  function schedule(at, x, y, type, options = {}) {
+    show.push({at, x, y, type, color: Math.floor(random(0, colors.length)),
+      phase: random(0, tau), instant: true, ...options});
+  }
 
   function resize() {
     width = window.innerWidth;
@@ -112,46 +84,119 @@
     window.removeEventListener('resize', resize);
     window.removeEventListener('pagehide', cleanup);
     document.removeEventListener('visibilitychange', onVisibility);
-    motion.removeEventListener('change', onMotionChange);
     host.remove();
-    particles.length = rockets.length = halos.length = 0;
-    window.__videoSchoolGoalCelebration = {id: event.id};
+    particles.length = rockets.length = halos.length = show.length = 0;
+    glows.clear();
+    window.__videoSchoolGoalCelebration = {id: event.id, kind: event.kind, variant};
   }
   function onVisibility() { if (document.hidden) cleanup(); }
-  function onMotionChange() { if (motion.matches) cancelAnimationFrame(frame); }
-  window.__videoSchoolGoalCelebration = {id: event.id, cleanup};
+  window.__videoSchoolGoalCelebration = {id: event.id, kind: event.kind, variant, cleanup};
   window.addEventListener('pagehide', cleanup);
   document.addEventListener('visibilitychange', onVisibility);
-  motion.addEventListener('change', onMotionChange);
-  timer = setTimeout(cleanup, motion.matches ? 4600 : duration);
-  if (motion.matches || !ctx) return;
+  timer = setTimeout(cleanup, duration);
+  if (!ctx) { cleanup(); return; }
   resize();
   window.addEventListener('resize', resize, {passive: true});
 
-  function burst(rocket) {
+  // Small effects sit just above the current lesson's action button.
+  const button = document.querySelector('.stMain [data-testid="stBaseButton-primary"]');
+  const rect = button?.getBoundingClientRect();
+  const anchor = {
+    x: clamp(rect ? rect.left + rect.width / 2 : width * .62, 100, width - 100) / width,
+    y: clamp(rect ? rect.top - 42 : height * .55, 120, height - 120) / height,
+  };
+  if (!goal) {
+    if (variant === 'comets') {
+      schedule(0, anchor.x, anchor.y, 'star', {count: 18, speed: 45});
+      for (let i = 0; i < 3; i++) {
+        schedule(i * 100, anchor.x + (i - 1) * 65 / width,
+          anchor.y - random(30, 70) / height, 'star', {
+            instant: false, from: anchor, travel: .3, count: 30, speed: 65,
+            bend: random(-.05, .05),
+          });
+      }
+    } else {
+      schedule(0, anchor.x, anchor.y, variant, {count: 76, speed: 105});
+      schedule(180, anchor.x + random(-25, 25) / width, anchor.y - 15 / height,
+        variant === 'spiral' ? 'spiral' : 'orbit', {count: 42, speed: 75, reverse: true});
+    }
+  } else if (variant === 'starfall') {
+    // Shooting stars break into satellite bursts before a golden-rain finale.
+    const direction = Math.random() < .5 ? -1 : 1;
+    for (let i = 0; i < 9; i++) {
+      schedule(i * random(290, 410), random(.15, .85), random(.16, .47), 'star', {
+        instant: i === 0, from: {x: direction < 0 ? 1.05 : -.05, y: random(.02, .20)},
+        bend: random(-.14, .14), travel: random(.5, .85), branch: true,
+      });
+    }
+    schedule(4200, random(.38, .62), .22, 'willow', {count: 200, speed: 260, branch: true});
+  } else if (variant === 'orbital') {
+    // Tilted rings and counter-rotating spirals form a moving miniature galaxy.
+    const center = random(.40, .60);
+    schedule(0, center, .34, 'spiral', {count: 150, speed: 230});
+    for (let i = 0; i < 8; i++) {
+      const angle = i / 8 * tau + random(-.25, .25);
+      schedule(250 + i * random(310, 430), center + Math.cos(angle) * .26,
+        .35 + Math.sin(angle) * .18, i % 2 ? 'spiral' : 'orbit', {
+          instant: false, from: {x: center, y: .90}, reverse: i % 2 === 0,
+          travel: random(.45, .7), bend: random(-.18, .18),
+        });
+    }
+    schedule(4300, center, .30, 'orbit', {count: 160, speed: 280, branch: true});
+    schedule(4700, center, .30, 'spiral', {count: 160, speed: 220, reverse: true});
+  } else {
+    // Petal-shaped shells unfold into a branching bouquet across the viewport.
+    const mirror = Math.random() < .5 ? -1 : 1;
+    for (let i = 0; i < 9; i++) {
+      schedule(i * random(330, 430), .5 + mirror * (i % 2 ? -1 : 1) * random(.12, .32),
+        random(.18, .45), i % 3 ? 'petals' : 'peony', {
+          instant: i === 0, from: {x: random(.20, .80), y: .96},
+          travel: random(.45, .7), branch: i % 3 === 0,
+        });
+    }
+    schedule(4200, random(.36, .64), .25, 'petals', {count: 185, speed: 265, branch: true});
+    schedule(4650, random(.40, .60), .25, 'willow', {count: 150, speed: 220});
+  }
+  show.sort((a, b) => a.at - b.at);
+
+  function burst(rocket, elapsed) {
     const x = rocket.x * width, y = rocket.y * height;
-    const scale = Math.min(width, height, 1000) / 800;
-    const count = Math.round((rocket.type === 'willow' ? 115 : 90) * (width < 600 ? .65 : 1));
-    halos.push({x, y, age: 0, color: colors[rocket.color], radius: 115 * scale});
+    const scale = clamp(Math.min(width, height) / (goal ? 740 : 900), .65, 1.4);
+    const count = Math.round((rocket.count || 125) * (goal && width < 600 ? .65 : 1));
+    const speed = (rocket.speed || 220) * scale;
+    const phase = rocket.phase, petals = pick([4, 5, 6]);
+    halos.push({x, y, age: 0, color: colors[rocket.color], radius: (goal ? 95 : 38) * scale});
     for (let i = 0; i < count; i++) {
-      const angle = (i / count) * tau + random(-.035, .035);
-      const outerRing = i % 3 !== 0;
-      const speed = (rocket.type === 'ring' ? (outerRing ? 155 : 82) : random(40, 190)) * scale;
-      const life = rocket.type === 'willow' ? random(1.9, 2.7) : random(1.2, 2.2);
+      const portion = i / count, angle = portion * tau + phase;
+      let radius = random(.3, 1), vyScale = 1, curl = 0;
+      if (rocket.type === 'orbit') { radius = i % 3 ? 1 : .55; vyScale = .45; curl = .35; }
+      if (rocket.type === 'petals') radius = (.56 + .44 * Math.cos(petals * angle)) * random(.75, 1);
+      if (rocket.type === 'star') radius = .25 + .75 * Math.pow(Math.abs(Math.cos(2 * angle)), 5);
+      if (rocket.type === 'spiral') { radius = .2 + .8 * portion; curl = (rocket.reverse ? -1 : 1) * 2.2; }
+      const a = rocket.type === 'spiral' ? portion * tau * 3 + phase : angle;
+      let vx = Math.cos(a) * speed * radius, vy = Math.sin(a) * speed * radius * vyScale;
+      if (rocket.type === 'orbit') {
+        const tiltedX = vx * Math.cos(phase) - vy * Math.sin(phase);
+        vy = vx * Math.sin(phase) + vy * Math.cos(phase); vx = tiltedX;
+      }
+      const willow = rocket.type === 'willow';
+      const life = goal ? (willow ? random(2.1, 2.8) : random(1.4, 2.3)) : random(1.0, 1.65);
       particles.push({
-        x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-        age: 0, life, drag: rocket.type === 'willow' ? .45 : .85,
-        gravity: rocket.type === 'willow' ? 62 : 48,
-        color: i % 6 === 0 ? '#fff7d9' : colors[rocket.color],
-        size: random(1.1, 2.2) * Math.max(.7, scale),
+        x, y, vx, vy, curl,
+        age: 0, life, drag: willow ? .4 : .8,
+        gravity: willow ? 68 : (curl ? 8 : 35),
+        color: i % 7 === 0 ? '#fff7dc' : (i % 4 ? colors[rocket.color] : pick(colors)),
+        size: random(goal ? 1.3 : 1, goal ? 2.5 : 1.8) * scale,
         twinkle: random(0, tau), trail: [],
       });
     }
-    // Smaller golden embers provide a second layer of drifting shimmer.
-    for (let i = 0; i < 18; i++) {
-      particles.push({x, y, vx: random(-65, 65) * scale, vy: random(-90, 10) * scale,
-        age: 0, life: random(1.6, 2.7), drag: 1.2, gravity: 40,
-        color: '#ffdf99', size: 1.2, twinkle: random(0, tau), trail: []});
+    if (goal && rocket.branch) {
+      for (let i = 0; i < 3; i++) {
+        const a = phase + i / 3 * tau;
+        schedule(elapsed + random(280, 520), clamp(rocket.x + Math.cos(a) * .10, .08, .92),
+          clamp(rocket.y + Math.sin(a) * .09, .10, .60), 'star', {count: 32, speed: 100});
+      }
+      show.sort((a, b) => a.at - b.at);
     }
   }
 
@@ -165,21 +210,22 @@
     last = now;
     ctx.clearRect(0, 0, width, height);
     ctx.globalCompositeOperation = 'lighter';
-    const fade = Math.min(1, (duration - elapsed) / 1000);
+    const fade = Math.min(1, (duration - elapsed) / (goal ? 900 : 450));
 
-    while (next < show.length && elapsed >= show[next].at) {
-      const launch = show[next++];
-      if (launch.instant) burst(launch);
-      else rockets.push({...launch, age: 0, travel: random(.48, .70)});
+    while (show.length && elapsed >= show[0].at) {
+      const launch = show.shift();
+      if (launch.instant) burst(launch, elapsed);
+      else rockets.push({...launch, age: 0, travel: launch.travel || .6});
     }
     for (let i = rockets.length - 1; i >= 0; i--) {
       const r = rockets[i];
       r.age += dt;
       const t = Math.min(1, r.age / r.travel);
-      const originX = r.x < .5 ? r.x - .10 : r.x + .10;
+      const origin = r.from || {x: r.x, y: .94};
+      const control = {x: (origin.x + r.x) / 2 + (r.bend || 0), y: Math.min(origin.y, r.y) - .12};
       const point = progress => ({
-        x: (originX + (r.x - originX) * progress) * width,
-        y: height * (.94 + (r.y - .94) * (1 - Math.pow(1 - progress, 1.6))),
+        x: ((1-progress)**2 * origin.x + 2*(1-progress)*progress*control.x + progress**2*r.x) * width,
+        y: ((1-progress)**2 * origin.y + 2*(1-progress)*progress*control.y + progress**2*r.y) * height,
       });
       const head = point(t);
       const tail = point(Math.max(0, t - .14));
@@ -189,10 +235,14 @@
       ctx.globalAlpha = .85 * fade;
       ctx.strokeStyle = gradient;
       ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(tail.x, tail.y); ctx.lineTo(head.x, head.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(tail.x, tail.y);
+      for (let j = 1; j <= 8; j++) {
+        const p = point(Math.max(0, t - .14) + Math.min(.14, t) * j / 8); ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
       ctx.fillStyle = '#fff5d3';
       ctx.beginPath(); ctx.arc(head.x, head.y, 2.2, 0, tau); ctx.fill();
-      if (t >= 1) { burst(r); rockets.splice(i, 1); }
+      if (t >= 1) { burst(r, elapsed); rockets.splice(i, 1); }
     }
     for (let i = halos.length - 1; i >= 0; i--) {
       const h = halos[i]; h.age += dt;
@@ -211,6 +261,10 @@
       if (p.age >= p.life) { particles.splice(i, 1); continue; }
       p.trail.push({x: p.x, y: p.y});
       if (p.trail.length > 7) p.trail.shift();
+      if (p.curl) {
+        const a = p.curl * dt, vx = p.vx * Math.cos(a) - p.vy * Math.sin(a);
+        p.vy = p.vx * Math.sin(a) + p.vy * Math.cos(a); p.vx = vx;
+      }
       const drag = Math.exp(-p.drag * dt);
       p.vx *= drag; p.vy = p.vy * drag + p.gravity * dt;
       p.x += p.vx * dt; p.y += p.vy * dt;
@@ -220,11 +274,11 @@
       ctx.strokeStyle = p.color;
       ctx.lineWidth = p.size * .75;
       for (let j = 1; j < p.trail.length; j++) {
-        ctx.globalAlpha = alpha * (j / p.trail.length) * .32;
+        ctx.globalAlpha = alpha * (j / p.trail.length) * .52;
         ctx.beginPath(); ctx.moveTo(p.trail[j - 1].x, p.trail[j - 1].y);
         ctx.lineTo(p.trail[j].x, p.trail[j].y); ctx.stroke();
       }
-      ctx.globalAlpha = alpha * .55;
+      ctx.globalAlpha = alpha * .8;
       const glowSize = p.size * 9;
       ctx.drawImage(glow(p.color), p.x - glowSize / 2, p.y - glowSize / 2, glowSize, glowSize);
       ctx.fillStyle = p.color;
