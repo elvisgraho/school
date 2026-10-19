@@ -7,16 +7,18 @@ import re
 import hashlib
 from typing import Optional, Dict, Any
 
+from .metadata import clean_author, clean_title
+
 
 # Primary pattern: Author - Title DD-MM-YYYY.mp4
 FILENAME_PATTERN = re.compile(
-    r'^(.+?)\s*-\s*(.+?)\s*(\d{2}-\d{2}-\d{4})\.mp4$',
+    r'^(.*?)\s*-\s*(.*?)\s*(\d{2}-\d{2}-\d{4})\.mp4$',
     re.IGNORECASE
 )
 
 # Fallback for files without separator: Author DD-MM-YYYY.mp4
 FILENAME_NO_SEPARATOR_PATTERN = re.compile(
-    r'^(\S+)\s+(\d{2}-\d{2}-\d{4})\.mp4$',
+    r'^(.+?)\s+(\d{2}-\d{2}-\d{4})\.mp4$',
     re.IGNORECASE
 )
 
@@ -24,35 +26,36 @@ FILENAME_NO_SEPARATOR_PATTERN = re.compile(
 def parse_filename(filename: str) -> Optional[Dict[str, Any]]:
     """
     Parse a video lesson filename into its components.
-    
+
     Handles multiple formats:
     - "Author - Title DD-MM-YYYY.mp4" (standard)
     - "Author DD-MM-YYYY.mp4" (no title/separator)
     - Titles with parentheses, dashes, etc.
-    
+
     Args:
         filename: The filename to parse
-    
+
     Returns:
         Dictionary with keys: author, title, lesson_date, unique_hash, or None if parsing fails.
     """
     clean_filename = filename.strip()
-    
+
     # Try primary pattern first: Author - Title DD-MM-YYYY.mp4
     match = FILENAME_PATTERN.match(clean_filename)
     if match:
-        author = match.group(1).strip()
         title = match.group(2).strip()
+        author = clean_author(match.group(1), title)
         date_str = match.group(3)
-        
+
         from datetime import datetime
         try:
             lesson_date = datetime.strptime(date_str, '%d-%m-%Y').date()
         except ValueError:
             return None
-        
+
+        title = clean_title(title, author, lesson_date.isoformat())
         unique_hash = generate_unique_hash(author, title)
-        
+
         return {
             'author': author,
             'title': title,
@@ -60,23 +63,24 @@ def parse_filename(filename: str) -> Optional[Dict[str, Any]]:
             'unique_hash': unique_hash,
             'filename': filename
         }
-    
+
     # Try fallback: Author DD-MM-YYYY.mp4 (no title)
     match = FILENAME_NO_SEPARATOR_PATTERN.match(clean_filename)
     if match:
-        author = match.group(1).strip()
+        author = clean_author(match.group(1))
         date_str = match.group(2)
-        
+
         from datetime import datetime
         try:
             lesson_date = datetime.strptime(date_str, '%d-%m-%Y').date()
         except ValueError:
             return None
-        
+
         # Use just author as title for these cases
         title = author
+        title = clean_title(title, author, lesson_date.isoformat())
         unique_hash = generate_unique_hash(author, title)
-        
+
         return {
             'author': author,
             'title': title,
@@ -84,7 +88,7 @@ def parse_filename(filename: str) -> Optional[Dict[str, Any]]:
             'unique_hash': unique_hash,
             'filename': filename
         }
-    
+
     return None
 
 

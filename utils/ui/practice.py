@@ -200,3 +200,11 @@ def render_practice_room(db) -> None:
                 with tag_cols[i % 4]:
                     st.button(f"✕ {tag['name']}", key=f'remove_tag_{lesson_id}_{tag["id"]}',
                              on_click=remove_tag_callback, args=(db, lesson_id, tag['id']))
+
+    with st.expander("☰ Transcript", expanded=False):
+        transcript = (lesson.get('transcript') or '').strip()
+        if transcript:
+            with st.container(height=350):
+                st.text(transcript)
+        else:
+            st.caption("No transcript available for this video.")

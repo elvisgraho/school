@@ -291,6 +291,7 @@ def main():
             width=WINDOW_WIDTH,
             height=WINDOW_HEIGHT,
             resizable=True,
+            text_select=True,
             min_size=(800, 600),
         )
 

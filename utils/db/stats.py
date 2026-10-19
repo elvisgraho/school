@@ -72,7 +72,7 @@ class StatsMixin:
                        MAX(lesson_date) as last_date
                 FROM lessons
                 WHERE status != 'Archived'
-                GROUP BY author
+                GROUP BY casefold(author)
                 ORDER BY count DESC, author ASC
             '''
             if limit is not None:
@@ -86,9 +86,10 @@ class StatsMixin:
         """Return every selectable author in the active library."""
         with self._get_connection() as conn:
             rows = conn.execute('''
-                SELECT DISTINCT author
+                SELECT author
                 FROM lessons
                 WHERE status != 'Archived' AND TRIM(author) != ''
+                GROUP BY casefold(author)
                 ORDER BY author COLLATE NOCASE
             ''').fetchall()
             return [row['author'] for row in rows]

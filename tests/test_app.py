@@ -103,6 +103,22 @@ class AppTestCase(unittest.TestCase):
             self.assertEqual(len(self.celebration_elements()), 1)
             self.assertIn('"kind": "lesson"', self.celebration_elements()[0].proto.body)
 
+    def test_practice_transcript_is_below_tags_and_handles_missing_text(self):
+        self.seed_lessons()
+        self.app.session_state['selected_lesson_id'] = 1
+        self.app.run()
+        self.assert_app_ok()
+        labels = [expander.label for expander in self.app.expander]
+        self.assertEqual(labels[-2:], ['Manage Tags', '☰ Transcript'])
+        self.assertFalse(self.app.expander[-1].proto.expanded)
+        self.assertTrue(any(text.value == 'Practice scales slowly' for text in self.app.text))
+        with self.db._get_connection() as conn:
+            conn.execute('UPDATE lessons SET transcript=NULL WHERE id=1')
+        self.app.run()
+        self.assert_app_ok()
+        self.assertTrue(any(caption.value == 'No transcript available for this video.'
+                            for caption in self.app.caption))
+
     def test_disable_zero_deadline_goal(self):
         self.db.set_setting('deadline_goal_enabled', 'true')
         self.db.set_setting('deadline_goal_date', (date.today() + timedelta(days=30)).isoformat())

@@ -1,13 +1,14 @@
 """Dependency-free regressions for record labels and the portable launcher."""
 import ast
 from datetime import datetime, timedelta
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,6 +54,49 @@ class RecordDatesTest(unittest.TestCase):
         self.assertEqual(format_week('2026-52'), '28 dec 2026 – 31 dec 2026')
         self.assertEqual(format_week('2024-01'), '1 jan 2024 – 7 jan 2024')
         self.assertIsNone(format_week(None))
+
+
+class PracticeTranscriptTest(unittest.TestCase):
+    def render(self, transcript):
+        tree = ast.parse((ROOT / 'utils/ui/practice.py').read_text())
+        function = next(node for node in tree.body
+                        if isinstance(node, ast.FunctionDef) and node.name == 'render_practice_room')
+        st = MagicMock()
+        st.session_state = {'selected_lesson_id': 1}
+        st.columns.side_effect = lambda widths: [MagicMock() for _ in range(
+            widths if isinstance(widths, int) else len(widths))]
+        st.selectbox.return_value = ''
+        namespace = dict(st=st, os=os, urllib=__import__('urllib.parse'),
+                         STATUS_COLORS={}, video_url=lambda lesson_id: '/video/1')
+        for name in ('clear_lesson', 'update_status_callback', 'add_tag_callback',
+                     'remove_tag_callback', 'exit_playlist', 'playlist_next',
+                     'playlist_prev', 'complete_and_next'):
+            namespace[name] = MagicMock()
+        exec(compile(ast.Module(body=[function], type_ignores=[]), '<practice room>', 'exec'),
+             namespace)
+        db = MagicMock()
+        db.get_lesson_by_id.return_value = dict(
+            id=1, title='Scales', author='Teacher', lesson_date='2026-10-10',
+            filepath=str(ROOT / 'app.py'), status='Completed', transcript=transcript)
+        db.get_lesson_tags.return_value = []
+        db.get_all_tags.return_value = []
+        namespace['render_practice_room'](db)
+        return st
+
+    def test_transcript_is_collapsed_below_tags_and_displayed_as_plain_text(self):
+        st = self.render('  Practice <b>scales</b> slowly\nNext phrase.  ')
+        self.assertEqual([(call.args[0], call.kwargs['expanded'])
+                          for call in st.expander.call_args_list],
+                         [('Manage Tags', False), ('☰ Transcript', False)])
+        st.text.assert_called_once_with('Practice <b>scales</b> slowly\nNext phrase.')
+        st.container.assert_called_once_with(height=350)
+
+    def test_missing_transcripts_show_a_clear_message(self):
+        for transcript in (None, '', '   '):
+            with self.subTest(transcript=transcript):
+                st = self.render(transcript)
+                st.text.assert_not_called()
+                st.caption.assert_called_with('No transcript available for this video.')
 
 
 class LauncherTest(unittest.TestCase):

@@ -72,11 +72,12 @@ class DatabaseBase:
         """Get a database connection with row factory."""
         conn = sqlite3.connect(self.db_path, timeout=30, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
+        conn.create_function('casefold', 1, lambda value: (value or '').casefold(), deterministic=True)
         conn.execute('PRAGMA foreign_keys = ON')
         return conn
 
     def _init_db(self):
-        """Initialize the database schema."""
+        """Create the current schema for new databases; preserve existing data."""
         with self._get_connection() as conn:
             conn.execute('BEGIN IMMEDIATE')
             conn.execute('''
@@ -93,20 +94,14 @@ class DatabaseBase:
                     completed_at DATETIME,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    transcript TEXT
+                    transcript TEXT,
+                    file_size INTEGER,
+                    file_mtime_ns INTEGER,
+                    transcript_size INTEGER,
+                    transcript_mtime_ns INTEGER,
+                    status_before_archive TEXT
                 )
             ''')
-
-            # Add metadata without replacing existing lessons, IDs, or tags.
-            columns = {row['name'] for row in conn.execute('PRAGMA table_info(lessons)')}
-            for name, declaration in {
-                'file_size': 'INTEGER', 'file_mtime_ns': 'INTEGER',
-                'transcript_size': 'INTEGER', 'transcript_mtime_ns': 'INTEGER',
-                'file_mtime': 'REAL DEFAULT 0', 'transcript': 'TEXT',
-                'status_before_archive': 'TEXT',
-            }.items():
-                if name not in columns:
-                    conn.execute(f'ALTER TABLE lessons ADD COLUMN {name} {declaration}')
 
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS completion_events (
@@ -117,22 +112,9 @@ class DatabaseBase:
                 )
             ''')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_completion_date ON completion_events(completed_at)')
-            previous_view = conn.execute(
-                "SELECT sql FROM sqlite_master WHERE type='view' AND name='completion_activity'").fetchone()
-            repair_records = previous_view is not None and 'GROUP BY l.id' not in previous_view[0]
-
-            # Completion credit belongs to the first finish of a lesson. Keep
-            # legacy repeat events for history, but never add another credit.
-            conn.execute('DROP TRIGGER IF EXISTS record_insert_completion')
-            conn.execute('DROP TRIGGER IF EXISTS record_update_completion')
+            # Completion credit belongs to the first finish of a lesson.
             conn.execute('''
-                INSERT OR IGNORE INTO completion_events (lesson_id, completed_at)
-                SELECT l.id, l.completed_at FROM lessons l
-                WHERE l.completed_at IS NOT NULL
-                  AND NOT EXISTS (SELECT 1 FROM completion_events e WHERE e.lesson_id=l.id)
-            ''')
-            conn.execute('''
-                CREATE TRIGGER record_insert_completion
+                CREATE TRIGGER IF NOT EXISTS record_insert_completion
                 AFTER INSERT ON lessons WHEN NEW.completed_at IS NOT NULL
                   AND NOT EXISTS (SELECT 1 FROM completion_events WHERE lesson_id=NEW.id)
                 BEGIN
@@ -141,7 +123,7 @@ class DatabaseBase:
                 END
             ''')
             conn.execute('''
-                CREATE TRIGGER record_update_completion
+                CREATE TRIGGER IF NOT EXISTS record_update_completion
                 AFTER UPDATE OF status, completed_at ON lessons
                 WHEN NEW.status = 'Completed' AND NEW.completed_at IS NOT NULL
                   AND NOT EXISTS (SELECT 1 FROM completion_events WHERE lesson_id=NEW.id)
@@ -151,15 +133,7 @@ class DatabaseBase:
                 END
             ''')
             conn.execute('''
-                UPDATE lessons SET completed_at = (
-                    SELECT MIN(e.completed_at) FROM completion_events e WHERE e.lesson_id=lessons.id)
-                WHERE EXISTS (SELECT 1 FROM completion_events e WHERE e.lesson_id=lessons.id)
-                  AND completed_at IS NOT (
-                    SELECT MIN(e.completed_at) FROM completion_events e WHERE e.lesson_id=lessons.id)
-            ''')
-            conn.execute('DROP VIEW IF EXISTS completion_activity')
-            conn.execute('''
-                CREATE VIEW completion_activity AS
+                CREATE VIEW IF NOT EXISTS completion_activity AS
                 SELECT l.id, l.title, l.author, l.lesson_date, MIN(e.completed_at) AS completed_at,
                        'Completed' AS status
                 FROM completion_events e JOIN lessons l ON l.id = e.lesson_id
@@ -249,12 +223,4 @@ class DatabaseBase:
                 ON lesson_tags(tag_id)
             ''')
 
-            if repair_records and conn.execute('''
-                SELECT 1 FROM completion_events GROUP BY lesson_id HAVING COUNT(*) > 1 LIMIT 1
-            ''').fetchone():
-                # Old repeat credits may have inflated saved records. These
-                # derived values are recomputed from first completions on demand.
-                conn.execute('''DELETE FROM personal_records WHERE record_type IN
-                    ('best_streak', 'most_day', 'most_week', 'most_month',
-                     'most_consistent', 'best_rolling_7', 'best_rolling_30')''')
         self.invalidate_cache()

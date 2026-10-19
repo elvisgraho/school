@@ -5,7 +5,9 @@ Contains stats, library sync, goals settings, and metronome.
 
 import streamlit as st
 import os
+from concurrent.futures import Future
 from datetime import date, timedelta
+from threading import Thread
 from .metronome import render_metronome
 from ..local_server import LAN_CHILD, LocalServer, network_addresses
 
@@ -73,10 +75,19 @@ def _get_local_server():
     return LocalServer()
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def _get_network_addresses():
-    """Discover adapters once on first render and reuse until the app restarts."""
-    return network_addresses()
+    """Start discovery once, without waiting on the UI thread."""
+    future = Future()
+
+    def discover():
+        try:
+            future.set_result(network_addresses())
+        except Exception as error:
+            future.set_exception(error)
+
+    Thread(target=discover, name='network-adapter-discovery', daemon=True).start()
+    return future
 
 
 def _change_local_server():
@@ -93,15 +104,34 @@ def _change_local_server():
 
 
 def _render_local_server():
-    st.markdown('**Home Network**')
     if os.environ.get(LAN_CHILD):
+        st.markdown('**Home Network**')
         st.caption('Connected to the local server. Progress is saved on the host PC.')
         return
+    discovery = _get_network_addresses()
+    # Poll only this section while discovery is pending. Subsequent app renders
+    # use the cached result and need no polling timer.
+    st.fragment(run_every=0.5 if not discovery.done() else None)(_render_local_server_controls)()
+
+
+def _render_local_server_controls():
+    st.markdown('**Home Network**')
+    discovery = _get_network_addresses()
+    if not discovery.done():
+        st.caption('Loading network adapters…')
+        return
+    try:
+        addresses = dict(discovery.result())
+    except Exception as error:
+        st.error(f'Could not load network adapters: {error}')
+        return
     server = _get_local_server()
-    addresses = dict(_get_network_addresses())
     if server.running:
         addresses.setdefault(server.address, server.address)
         st.session_state.local_server_address = server.address
+    elif not addresses:
+        st.caption('No network adapters available.')
+        return
     elif st.session_state.get('local_server_address') not in addresses:
         st.session_state.local_server_address = next(iter(addresses))
     st.selectbox(
@@ -129,7 +159,7 @@ def _render_local_server():
     if not server.running and server.firewall_requested:
         if st.button('Retry firewall cleanup'):
             _change_local_server()
-            st.rerun()
+            st.rerun(scope='fragment')
 
 
 def _render_library_sync(db, sync_db_func) -> None:

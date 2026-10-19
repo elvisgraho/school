@@ -8,6 +8,8 @@ import hashlib
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 
+from ..metadata import canonical_authors, clean_author, clean_title
+
 PAGE_SIZE = 50
 
 
@@ -53,6 +55,33 @@ def parse_srt_file(srt_path: str) -> Optional[str]:
 class LessonsMixin:
     """Mixin for lesson-related database operations."""
 
+    def _normalize_lesson_metadata(self, conn):
+        rows = conn.execute(
+            'SELECT id, author, title, lesson_date FROM lessons ORDER BY id').fetchall()
+        authors = canonical_authors(clean_author(row['author'], row['title']) for row in rows)
+        changes = []
+        counts = {'authors': 0, 'titles': 0}
+        for row in rows:
+            author = authors[clean_author(row['author'], row['title']).casefold()]
+            title = row['title']
+            if title == clean_title(None, row['author'], row['lesson_date']):
+                title = None
+            title = clean_title(title, author, row['lesson_date'])
+            counts['authors'] += author != row['author']
+            counts['titles'] += title != row['title']
+            if (author, title) != (row['author'], row['title']):
+                changes.append((author, title, row['id']))
+        conn.executemany('UPDATE lessons SET author=?, title=? WHERE id=?', changes)
+        return authors, counts
+
+    def normalize_lesson_metadata(self):
+        """Clean library names without changing files, identities, or progress."""
+        with self._get_connection() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            _, counts = self._normalize_lesson_metadata(conn)
+        self.invalidate_cache()
+        return counts
+
     def sync_folder(self, folder_path: str, parse_func) -> Dict[str, Any]:
         """Sync full content identities; only reread changed video/subtitle files."""
         stats = {'added': 0, 'updated': 0, 'archived': 0, 'errors': 0, 'unchanged': 0}
@@ -74,40 +103,38 @@ class LessonsMixin:
             return stats
 
         with self._get_connection() as conn:
+            authors, _ = self._normalize_lesson_metadata(conn)
             # Never materialize the library's large transcript bodies during sync.
             rows = conn.execute("""
-                SELECT id, file_hash, filepath, filename, status, file_mtime_ns,
+                SELECT id, file_hash, filepath, filename, author, title, lesson_date, status, file_mtime_ns,
                        file_size, transcript_mtime_ns, transcript_size
                 FROM lessons
             """).fetchall()
             by_path = {os.path.abspath(row['filepath']): dict(row) for row in rows}
             by_hash = {row['file_hash']: dict(row) for row in rows}
             current_hashes = set()
-            metadata.sort(key=lambda item: item[0] not in by_path)
+            metadata.sort(key=lambda item: (item[0] not in by_path, item[0].casefold(), item[0]))
 
             for filepath, filename, video_stat in metadata:
                 parsed = parse_func(filename)
                 if not parsed:
                     stats['errors'] += 1
                     continue
+                author = clean_author(parsed['author'], parsed['title'])
+                author = authors.setdefault(author.casefold(), author)
+                lesson_date = parsed['lesson_date'].isoformat()
+                title = parsed['title']
+                if title == clean_title(None, parsed['author'], lesson_date):
+                    title = None
+                title = clean_title(title, author, lesson_date)
                 existing = by_path.get(filepath)
-                legacy_hash = None
                 try:
-                    if (existing and existing['file_hash'].startswith('sha256:')
-                            and existing['file_size'] == video_stat.st_size
+                    if (existing and existing['file_size'] == video_stat.st_size
                             and existing['file_mtime_ns'] == video_stat.st_mtime_ns):
                         file_hash = existing['file_hash']
                     else:
                         digest = hashlib.sha256()
                         with open(filepath, 'rb') as video:
-                            # Legacy fingerprint is used only to migrate an old row.
-                            first = video.read(8192)
-                            old_digest = hashlib.md5(first)
-                            if video_stat.st_size > 8192:
-                                video.seek(-8192, 2)
-                                old_digest.update(video.read(8192))
-                            legacy_hash = old_digest.hexdigest()
-                            video.seek(0)
                             for chunk in iter(lambda: video.read(1024 * 1024), b''):
                                 digest.update(chunk)
                         file_hash = 'sha256:' + digest.hexdigest()
@@ -123,14 +150,6 @@ class LessonsMixin:
                     continue
                 current_hashes.add(file_hash)
                 matching = by_hash.get(file_hash)
-                if matching is None and legacy_hash:
-                    legacy = by_hash.get(legacy_hash)
-                    # Preserve progress for an existing path or a moved legacy file.
-                    # Do not steal another still-present video's legacy identity.
-                    if legacy and (os.path.abspath(legacy['filepath']) == filepath
-                                   or not os.path.isfile(legacy['filepath'])):
-                        matching = legacy
-
                 srt_path = os.path.splitext(filepath)[0] + '.srt'
                 try:
                     srt_stat = os.stat(srt_path)
@@ -164,6 +183,9 @@ class LessonsMixin:
 
                 unchanged = (matching and matching['filepath'] == filepath
                              and matching['filename'] == filename
+                             and matching['author'] == author
+                             and matching['title'] == title
+                             and matching['lesson_date'] == lesson_date
                              and matching['file_hash'] == file_hash
                              and matching['file_size'] == video_stat.st_size
                              and matching['file_mtime_ns'] == video_stat.st_mtime_ns
@@ -171,8 +193,8 @@ class LessonsMixin:
                 if unchanged:
                     stats['unchanged'] += 1
                     continue
-                values = (file_hash, filepath, filename, parsed['author'], parsed['title'],
-                          parsed['lesson_date'].isoformat(), video_stat.st_mtime,
+                values = (file_hash, filepath, filename, author, title,
+                          lesson_date, video_stat.st_mtime,
                           video_stat.st_size, video_stat.st_mtime_ns, *srt_metadata)
                 if matching:
                     conn.execute("""
@@ -186,7 +208,7 @@ class LessonsMixin:
                             updated_at=CURRENT_TIMESTAMP WHERE id=?
                     """, (*values, subtitle_changed, transcript, matching['id']))
                     stats['updated'] += 1
-                    # A duplicate copy later in this scan must see the migrated hash.
+                    # Keep the hash lookup current for later copies in this scan.
                     by_hash.pop(matching['file_hash'], None)
                     matching = dict(matching, file_hash=file_hash, filepath=filepath)
                     by_hash[file_hash] = matching
@@ -223,8 +245,8 @@ class LessonsMixin:
             conditions.append('l.status IN (' + ','.join('?' for _ in status_filter) + ')')
             params.extend(status_filter)
         if author_filter:
-            conditions.append('l.author = ?')
-            params.append(author_filter)
+            conditions.append('casefold(l.author) = ?')
+            params.append(author_filter.casefold())
         for value, operator in ((date_from, '>='), (date_to, '<=')):
             if value:
                 conditions.append(f'l.lesson_date {operator} ?')

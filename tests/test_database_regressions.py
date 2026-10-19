@@ -46,13 +46,68 @@ class DatabaseRegressionTest(unittest.TestCase):
         self.assertEqual(result['added'], 2)
         self.assertEqual(self.db.get_stats()['total'], 2)
 
-    def test_legacy_hash_migrates_without_losing_id_progress_or_tags(self):
+    def test_metadata_cleanup_preserves_progress_tags_and_transcripts(self):
+        self.seed(3, completed=True)
+        with self.db._get_connection() as conn:
+            conn.execute("UPDATE lessons SET author='McTeacher',title='remem@gmx.de - Scales' WHERE id=1")
+            conn.execute("UPDATE lessons SET author='McTeacher' WHERE id=2")
+            conn.execute("UPDATE lessons SET author='mcteacher',title='  ' WHERE id=3")
+            history = conn.execute('SELECT * FROM completion_events ORDER BY id').fetchall()
+        tag = self.db.create_tag('favorite')
+        self.db.add_tag_to_lesson(3, tag)
+
+        self.assertEqual(self.db.normalize_lesson_metadata(), {'authors': 1, 'titles': 2})
+        self.assertEqual(self.db.get_library_authors(), ['McTeacher'])
+        self.assertEqual(self.db.get_author_breakdown()[0]['count'], 3)
+        self.assertEqual(self.db.get_paginated_lessons(author_filter='MCTEACHER')[1], 3)
+        self.assertEqual(self.db.get_lesson_by_id(1)['title'], 'Scales')
+        unnamed = self.db.get_lesson_by_id(3)
+        self.assertEqual(unnamed['title'], f'Lesson by McTeacher ({date.today().isoformat()})')
+        self.assertEqual(unnamed['status'], 'Completed')
+        self.assertEqual(unnamed['completed_at'], date.today().isoformat())
+        self.assertEqual(unnamed['transcript'], 'scales 50%_')
+        self.assertEqual(self.db.get_lesson_tags(3)[0]['id'], tag)
+        with self.db._get_connection() as conn:
+            self.assertEqual(conn.execute('SELECT * FROM completion_events ORDER BY id').fetchall(), history)
+        self.assertEqual(self.db.normalize_lesson_metadata(), {'authors': 0, 'titles': 0})
+
+    def test_new_sync_cleans_names_and_reuses_author_capitalization(self):
+        self.seed()
+        with self.db._get_connection() as conn:
+            conn.execute("UPDATE lessons SET author='McTeacher'")
+        for index, filename in enumerate((
+            'mcteacher - remem@gmx.de - Scales 10-10-2026.mp4',
+            'MCTEACHER - 10-10-2026.mp4',
+        )):
+            (self.videos / filename).write_bytes(f'video {index}'.encode())
+        result = self.db.sync_folder(str(self.videos), parse_filename)
+        self.assertEqual(result['added'], 2)
+        self.assertEqual(result['errors'], 0)
+        lessons, total = self.db.get_library_lessons()
+        self.assertEqual(total, 2)
+        self.assertEqual({row['author'] for row in lessons}, {'McTeacher'})
+        self.assertEqual({row['title'] for row in lessons},
+                         {'Scales', 'Lesson by McTeacher (2026-10-10)'})
+        self.assertEqual(self.db.sync_folder(str(self.videos), parse_filename)['unchanged'], 2)
+
+    def test_author_filters_and_counts_are_unicode_case_insensitive(self):
+        self.seed(2)
+        with self.db._get_connection() as conn:
+            conn.execute("UPDATE lessons SET author='Øyvind' WHERE id=1")
+            conn.execute("UPDATE lessons SET author='øyvind' WHERE id=2")
+        self.assertEqual(self.db.get_paginated_lessons(author_filter='ØYVIND')[1], 2)
+        self.assertEqual(len(self.db.get_library_authors()), 1)
+        self.assertEqual(self.db.get_author_breakdown()[0]['count'], 2)
+        self.db.normalize_lesson_metadata()
+        self.assertEqual(self.db.get_library_authors(), ['Øyvind'])
+
+    def test_sync_and_rename_preserve_id_progress_and_tags(self):
         video = self.video('A', b'video')
         with self.db._get_connection() as conn:
             conn.execute('''INSERT INTO lessons(id,file_hash,filepath,filename,author,title,
                             lesson_date,status,completed_at)
                             VALUES (42,?,?,?,'Teacher','A','2026-10-10','Completed','2024-01-01')''',
-                         (hashlib.md5(b'video').hexdigest(), str(video), video.name))
+                         ('sha256:' + hashlib.sha256(b'video').hexdigest(), str(video), video.name))
         tag = self.db.create_tag('favorite')
         self.db.add_tag_to_lesson(42, tag)
         self.db.sync_folder(str(self.videos), parse_filename)
@@ -144,25 +199,21 @@ class DatabaseRegressionTest(unittest.TestCase):
         self.assertEqual(self.db.get_best_streak(), 1)
         self.assertEqual(self.db.get_activity_data_for_year(date.today().year)[0]['count'], 1)
 
-    def test_legacy_repeat_credits_are_ignored_without_deleting_history(self):
+    def test_repeat_event_history_is_counted_once_and_preserved_on_startup(self):
         self.seed()
         yesterday = (date.today() - timedelta(days=1)).isoformat()
         today = date.today().isoformat()
         with self.db._get_connection() as conn:
             conn.executemany('INSERT INTO completion_events(lesson_id,completed_at) VALUES (1,?)',
                              [(yesterday,), (today,)])
-            conn.execute("UPDATE lessons SET status='Completed',completed_at=? WHERE id=1", (today,))
-            conn.execute('DROP VIEW completion_activity')
-            conn.execute('''CREATE VIEW completion_activity AS
-                SELECT l.id,l.title,l.author,l.lesson_date,e.completed_at,'Completed' AS status
-                FROM completion_events e JOIN lessons l ON l.id=e.lesson_id''')
-            conn.execute("INSERT INTO personal_records(record_type,value) VALUES ('most_day',99)")
+            conn.execute("UPDATE lessons SET status='Completed',completed_at=? WHERE id=1", (yesterday,))
+            conn.execute("INSERT INTO personal_records(record_type,value) VALUES ('most_day',1)")
         self.db._init_db()
         self.assertEqual(self.db.get_lesson_by_id(1)['completed_at'], yesterday)
         self.assertEqual(self.db.get_today_completions(), 0)
         self.assertEqual(self.db.get_most_lessons_in_day()['value'], 1)
         self.assertEqual(self.db.get_best_streak(), 1)
-        self.assertNotIn('most_day', self.db.get_personal_records())
+        self.assertEqual(self.db.get_personal_records()['most_day']['value'], 1)
         self.db.compute_and_update_records()
         self.assertEqual(self.db.get_personal_records()['most_day']['value'], 1)
         self.db._init_db()
@@ -181,24 +232,39 @@ class DatabaseRegressionTest(unittest.TestCase):
         self.assertEqual(self.db.get_best_streak(), 400)
         self.assertFalse(self.db.get_streak_recovery_info()['is_at_best'])
 
-    def test_completion_migration_failure_keeps_the_existing_schema_and_credit(self):
+    def test_existing_database_initialization_preserves_schema_and_data(self):
         self.seed(completed=True)
+        self.db.compute_and_update_records()
         connect = self.db._get_connection
+        with connect() as conn:
+            original_schema = conn.execute('SELECT * FROM sqlite_master ORDER BY name').fetchall()
+            original_data = {
+                table: conn.execute(f'SELECT * FROM {table}').fetchall()
+                for table in ('lessons', 'completion_events', 'personal_records')
+            }
 
-        def deny_view_change():
+        def deny_existing_database_changes():
             conn = connect()
-            conn.set_authorizer(lambda action, *args:
-                                sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_DROP_VIEW
-                                else sqlite3.SQLITE_OK)
+
+            def authorize(action, table, *args):
+                if action in (sqlite3.SQLITE_ALTER_TABLE, sqlite3.SQLITE_DROP_VIEW,
+                              sqlite3.SQLITE_DROP_TRIGGER, sqlite3.SQLITE_DROP_TABLE):
+                    return sqlite3.SQLITE_DENY
+                if (action in (sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE)
+                        and table in original_data):
+                    return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+
+            conn.set_authorizer(authorize)
             return conn
 
-        with patch.object(self.db, '_get_connection', side_effect=deny_view_change):
-            with self.assertRaises(sqlite3.DatabaseError):
-                self.db._init_db()
+        with patch.object(self.db, '_get_connection', side_effect=deny_existing_database_changes):
+            self.db._init_db()
         with connect() as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' "
-                                          "AND name IN ('record_insert_completion', "
-                                          "'record_update_completion')").fetchone()[0], 2)
+            self.assertEqual(conn.execute('SELECT * FROM sqlite_master ORDER BY name').fetchall(),
+                             original_schema)
+            for table, rows in original_data.items():
+                self.assertEqual(conn.execute(f'SELECT * FROM {table}').fetchall(), rows)
         self.assertEqual(self.db.get_today_completions(), 1)
         self.db.update_status(1, 'In Progress')
         self.db.update_status(1, 'Completed')
