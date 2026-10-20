@@ -52,6 +52,33 @@ class AppTestCase(unittest.TestCase):
         self.assert_app_ok()
         self.assertEqual([tab.label for tab in self.app.tabs],
                          ['DISCOVERY', 'LIBRARY', 'ANALYTICS'])
+        self.assertTrue(any('recorded time' in info.value for info in self.app.info))
+
+    def test_completion_hour_charts_crop_hours_and_fill_weekday_gaps(self):
+        self.seed_lessons()
+        with self.db._get_connection() as conn:
+            conn.executemany('INSERT INTO completion_events(lesson_id, completed_at) VALUES (?, ?)', [
+                (1, '2026-10-19 06:15:00'),
+                (2, '2026-10-19 20:30:00'),
+                (3, '2026-10-19 20:45:00'),
+                (1, '2026-10-18 22:59:59'),
+            ])
+        with patch('utils.ui.analytics.st.altair_chart', wraps=st.altair_chart) as charts:
+            self.app.run()
+        self.assert_app_ok()
+        by_title = {call.args[0].title: call.args[0] for call in charts.call_args_list
+                    if isinstance(call.args[0].title, str)}
+        hourly = by_title['Completions by Hour']
+        schedule = by_title['Weekday × Hour']
+        # Validate the Vega-Lite specs as well as the displayed data.
+        hourly.to_dict(validate=True)
+        schedule.to_dict(validate=True)
+        self.assertEqual(hourly.data['hour'].tolist(), list(range(6, 23)))
+        self.assertEqual(int(hourly.data['count'].sum()), 4)
+        self.assertEqual(int(hourly.data.loc[hourly.data['hour'] == 7, 'count'].iloc[0]), 0)
+        self.assertEqual(len(schedule.data), 7 * 17)
+        self.assertEqual(schedule.data['day'].unique().tolist(),
+                         ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
 
     def seed_extra_lesson(self):
         with self.db._get_connection() as conn:
@@ -108,16 +135,19 @@ class AppTestCase(unittest.TestCase):
         self.app.session_state['selected_lesson_id'] = 1
         self.app.run()
         self.assert_app_ok()
-        labels = [expander.label for expander in self.app.expander]
-        self.assertEqual(labels[-2:], ['Manage Tags', '☰ Transcript'])
-        self.assertFalse(self.app.expander[-1].proto.expanded)
-        self.assertTrue(any(text.value == 'Practice scales slowly' for text in self.app.text))
+        # App-wide queries also include the sidebar's Goals Settings expander.
+        practice_expanders = self.app.main.expander
+        self.assertEqual([expander.label for expander in practice_expanders],
+                         ['Manage Tags', '☰ Transcript'])
+        self.assertFalse(practice_expanders[-1].proto.expanded)
+        self.assertTrue(any(expander.label == 'Goals Settings' for expander in self.app.sidebar.expander))
+        self.assertTrue(any(text.value == 'Practice scales slowly' for text in self.app.main.text))
         with self.db._get_connection() as conn:
             conn.execute('UPDATE lessons SET transcript=NULL WHERE id=1')
         self.app.run()
         self.assert_app_ok()
         self.assertTrue(any(caption.value == 'No transcript available for this video.'
-                            for caption in self.app.caption))
+                            for caption in self.app.main.caption))
 
     def test_disable_zero_deadline_goal(self):
         self.db.set_setting('deadline_goal_enabled', 'true')

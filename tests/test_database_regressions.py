@@ -46,6 +46,31 @@ class DatabaseRegressionTest(unittest.TestCase):
         self.assertEqual(result['added'], 2)
         self.assertEqual(self.db.get_stats()['total'], 2)
 
+    def test_completion_hours_use_event_times_and_skip_unknown_hours(self):
+        self.assertEqual(self.db.get_completion_hour_stats(), [])
+        self.seed(3)
+        with self.db._get_connection() as conn:
+            conn.executemany('INSERT INTO completion_events(lesson_id, completed_at) VALUES (?, ?)', [
+                (1, '2026-10-18 00:00:00'),  # Sunday midnight is a real hour.
+                (1, '2026-10-19 06:15:00.123456'),
+                (2, '2026-10-19 06:59:59'),
+                (2, '2026-10-19T20:30:00'),
+                (3, '2026-10-18T23:45:00+02:00'),  # Preserve recorded wall time.
+                (3, '2026-10-19'),  # Legacy dates must not invent midnight activity.
+                (3, '2026-10-19  '),
+                (3, 'invalid timestamp'),
+                (3, '2026-10-19 24:00:00'),
+            ])
+            conn.execute("UPDATE lessons SET status='Archived' WHERE id=2")
+            conn.execute("UPDATE lessons SET completed_at='2026-10-20 12:00:00' WHERE id=1")
+
+        self.assertEqual(self.db.get_completion_hour_stats(), [
+            {'day_index': 0, 'hour': 6, 'count': 2},
+            {'day_index': 0, 'hour': 20, 'count': 1},
+            {'day_index': 6, 'hour': 0, 'count': 1},
+            {'day_index': 6, 'hour': 23, 'count': 1},
+        ])
+
     def test_metadata_cleanup_preserves_progress_tags_and_transcripts(self):
         self.seed(3, completed=True)
         with self.db._get_connection() as conn:

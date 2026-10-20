@@ -123,6 +123,26 @@ class StatsMixin:
                 result.append({'day_index': python_dow, 'count': row['count']})
             return result
 
+    def get_completion_hour_stats(self) -> List[Dict[str, Any]]:
+        """Count timestamped events by recorded local weekday and hour.
+
+        Date-only legacy entries have no known hour and must not count as
+        midnight activity. Keep wall-clock times as recorded by the app.
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute('''
+                SELECT (CAST(strftime('%w', substr(completed_at, 1, 19)) AS INTEGER) + 6) % 7
+                           AS day_index,
+                       CAST(strftime('%H', substr(completed_at, 1, 19)) AS INTEGER) AS hour,
+                       COUNT(*) AS count
+                FROM completion_events
+                WHERE completed_at GLOB '????-??-??[ T]??:??*'
+                  AND strftime('%H', substr(completed_at, 1, 19)) BETWEEN '00' AND '23'
+                GROUP BY day_index, hour
+                ORDER BY day_index, hour
+            ''').fetchall()
+            return [dict(row) for row in rows]
+
     def get_backlog_trend(self) -> List[Dict[str, Any]]:
         """Get backlog trend data."""
         with self._get_connection() as conn:

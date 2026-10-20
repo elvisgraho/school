@@ -89,6 +89,71 @@ def _format_year_month_span(first_date, last_date):
     return " ".join(parts)
 
 
+def _render_completion_hours(db) -> None:
+    """Show all-time completion patterns, cropped to the observed hour range."""
+    st.markdown('<div class="section-label">Activity by Time</div>', unsafe_allow_html=True)
+    activity = db.get_completion_hour_stats()
+    if not activity:
+        st.info("Complete a lesson with a recorded time to see your hourly activity.")
+        return
+
+    df = pd.DataFrame(activity)
+    hours = list(range(int(df['hour'].min()), int(df['hour'].max()) + 1))
+    days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    # Keep gaps visible and all weekdays aligned on the same hour range.
+    grid = pd.MultiIndex.from_product([range(7), hours], names=['day_index', 'hour'])
+    schedule = df.set_index(['day_index', 'hour']).reindex(grid, fill_value=0).reset_index()
+    schedule['day'] = schedule['day_index'].map(dict(enumerate(days)))
+    schedule['time'] = schedule['hour'].map(lambda hour: f'{hour:02d}:00–{hour + 1:02d}:00')
+    hourly = schedule.groupby('hour', as_index=False)['count'].sum()
+    hourly['time'] = hourly['hour'].map(lambda hour: f'{hour:02d}:00–{hour + 1:02d}:00')
+    peak_count = int(hourly['count'].max())
+
+    hour_axis = alt.Axis(labelExpr="format(datum.value, '02d') + ':00'", labelAngle=0)
+    hourly_chart = alt.Chart(hourly).mark_bar(
+        cornerRadiusTopLeft=3, cornerRadiusTopRight=3,
+    ).encode(
+        x=alt.X('hour:O', title='Hour of day', sort=hours, axis=hour_axis),
+        y=alt.Y('count:Q', title='Completions', axis=alt.Axis(tickMinStep=1)),
+        color=alt.condition(alt.datum.count == peak_count, alt.value('#48BB78'), alt.value('#718096')),
+        tooltip=[alt.Tooltip('time:N', title='Hour'), alt.Tooltip('count:Q', title='Completions')],
+    ).properties(height=200, title='Completions by Hour')
+    st.altair_chart(hourly_chart, width='stretch')
+
+    schedule_peak = int(schedule['count'].max())
+    hover = alt.selection_point(fields=['day', 'hour'], on='pointerover', clear='pointerout', empty=False)
+    schedule_base = alt.Chart().encode(
+        x=alt.X('hour:O', title=None, sort=hours,
+                scale=alt.Scale(paddingInner=0.08, paddingOuter=0.02),
+                axis=alt.Axis(labelExpr="format(datum.value, '02d') + ':00'", labelAngle=0,
+                              orient='top', labelPadding=10)),
+        y=alt.Y('day:N', title=None, sort=days,
+                scale=alt.Scale(paddingInner=0.15, paddingOuter=0.04),
+                axis=alt.Axis(labelAngle=0, labelPadding=12, labelFontWeight=500)),
+        tooltip=[alt.Tooltip('day:N', title='Day'), alt.Tooltip('time:N', title='Hour'),
+                 alt.Tooltip('count:Q', title='Completions')],
+    )
+    schedule_cells = schedule_base.mark_rect(cornerRadius=4).encode(
+        color=alt.Color('count:Q', title='Completions',
+                        scale=alt.Scale(type='sqrt', domain=[0, schedule_peak],
+                                        range=['#282d2b', '#1d633f', '#3bac67', '#b2f5c6']),
+                        legend=None),
+        stroke=alt.condition(hover, alt.value('#e2e8f0'), alt.value('transparent')),
+        strokeWidth=alt.value(1.5),
+    )
+    schedule_counts = schedule_base.mark_text(fontSize=12, fontWeight=500).encode(
+        text=alt.Text('count:Q', format='d'),
+        color=alt.condition(alt.datum.count >= schedule_peak * 0.4,
+                            alt.value('#102b1b'), alt.value('#dcfce7')),
+    ).transform_filter(alt.datum.count > 0)
+    schedule_chart = alt.layer(schedule_cells, schedule_counts, data=schedule).add_params(hover).properties(
+        height=266, title='Weekday × Hour',
+    ).configure_axis(domain=False, ticks=False, grid=False, labelFontSize=11).configure_view(
+        strokeWidth=0,
+    ).configure_title(anchor='start', fontSize=13, offset=14)
+    st.altair_chart(schedule_chart, width='stretch')
+
+
 def render_analytics(db) -> None:
     """Render Analytics with a focus on consistency and progress trends."""
     apply_conservative_style()
@@ -443,6 +508,10 @@ def render_analytics(db) -> None:
             st.altair_chart(chart_dow, width='stretch')
         else:
             st.caption("Not enough data.")
+
+    st.markdown("---")
+    _render_completion_hours(db)
+    st.markdown("---")
 
     # --- Section 5: Personal Records ---
     st.markdown('<div class="section-label">Personal Records</div>', unsafe_allow_html=True)
